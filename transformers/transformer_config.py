@@ -1,6 +1,6 @@
 
 class TransformerConfig:
-    def __init__(self, d_model, d_ff, d_block, d_vocab, n_decoders=6,attention="mh",n_heads=8):
+    def __init__(self, d_model: int, d_ff:int, d_block:int, d_vocab:int, n_decoders:int=6,attention:str="mh",n_heads:int=8):
         self.d_model = d_model
         self.d_ff = d_ff
         self.d_block = d_block
