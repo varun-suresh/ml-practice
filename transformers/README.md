@@ -24,4 +24,44 @@ where -1 indicates an ignore character.
 
 Character level Shakespeare Dataset
 
-I want the model to generate text after being trained on all the works of Shakespeare (here)[data/shakespeare.txt]
+I want the model to generate text after being trained on all the works of Shakespeare (here)[https://github.com/varun-suresh/ml-practice/data/shakespeare.txt]. Sample output from the model
+```
+BRUTUS:
+Not will I love thee every man hour.
+
+MENENIUS:
+I have lighted it body,
+She is not at mine own being for our purpose,
+Lest thou be quiet.
+
+QUEEN MARGARET:
+Who shall this, my lord, this gentleman.
+How well you are left and strength friendly long,
+When some of common sons; but it is meet a
+batives for thy life-trust for thumb, surn, some two
+bend move the lower heart I slaughter
+In my breallog after the stern blame her.
+
+DUKE VINCENTIO:
+Why should he died is court at Christian;
+This purpose reconciled by for self,
+With Lady And that they do not chamber,
+Ye show fair may lived at thy birth,
+Or how 'tis held, my lord, it greet out.
+
+ANTIGONUS:
+This is the busier whooes they have been
+Lield enter be no white both the child.
+
+POMPEY:
+Why, then you may be?  this new spring of it now.
+
+ROMEO:
+But, some motion; neither would speak to their soldiers;
+So she deliver our dommission.
+And goose cords will him as York then?
+Have I not you deny, not to be doubted lamp, of my lady.
+
+QUEEN:
+We, speak:
+```
