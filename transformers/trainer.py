@@ -10,7 +10,7 @@ class Trainer:
         self.iter_num = 0
         self.iter_time = 0
         self.iter_dt = 0
-        self.device = "mps" if torch.backends.mps.is_available() else "cpu"
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
     def run(self,path=None):
         model, config = self.model, self.config

@@ -11,7 +11,7 @@ from transformer_config import TransformerConfig
 @dataclass
 class Config:
     max_iters = 2000
-    batch_size = 100
+    batch_size = 400
 
 def train_transformer(dataset, transformer_config, path=None):
     """
@@ -95,7 +95,7 @@ def generate_text(model_path, text_path, start_text, max_new_tokens):
     model = Transformer(transformer_config)
     checkpoint = torch.load(model_path)
     model.load_state_dict(checkpoint['model_state_dict'])
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device=device)
     model.eval()
     inp = dataset.encode(start_text)
@@ -105,7 +105,7 @@ def generate_text(model_path, text_path, start_text, max_new_tokens):
  
 if __name__ == "__main__":
     # train_sortDataset()
-    model_path = "models/char_level_shakespeare.pk"
+    model_path = "char_level_shakespeare.pk"
     text_path = "data/shakespeare.txt"
     train_text(model_path, text_path)
     generate_text(model_path, text_path,"The gods be good unto us", 1000)
