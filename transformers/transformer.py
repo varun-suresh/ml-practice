@@ -6,6 +6,7 @@ import torch
 from torch.nn import functional as F
 from transformer_config import TransformerConfig
 
+
 # Attention layer
 class ScaledDotProductAttention(nn.Module):
     def __init__(self, config: TransformerConfig):

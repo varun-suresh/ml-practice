@@ -8,10 +8,12 @@ from dataclasses import dataclass
 from utils import timeit
 from transformer_config import TransformerConfig
 
+
 @dataclass
 class Config:
     max_iters = 2000
     batch_size = 400
+
 
 def train_transformer(dataset, transformer_config, path=None):
     """
@@ -19,43 +21,46 @@ def train_transformer(dataset, transformer_config, path=None):
     """
     model = Transformer(transformer_config)
     config = Config
-    trainer = Trainer(config, model,dataset)
+    trainer = Trainer(config, model, dataset)
     trainer.run(path)
 
+
 @timeit
-def eval_transformer(transformer_config,path):
+def eval_transformer(transformer_config, path):
     """
     Loads the transformer from the specified path and runs eval
     """
     model = Transformer(transformer_config)
     checkpoint = torch.load(path)
-    model.load_state_dict(checkpoint['model_state_dict'])
+    model.load_state_dict(checkpoint["model_state_dict"])
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     model = model.to(device=device)
-    test_dataset = SortDataset('test')
-    test_loader = DataLoader(test_dataset,batch_size=64) 
+    test_dataset = SortDataset("test")
+    test_loader = DataLoader(test_dataset, batch_size=64)
     model.eval()
     n = 6
     correct = 0
     print(f"Model is on device: {next(model.parameters()).device}")
-    for x,y in test_loader:
-        x,y = x.to(device), y.to(device)
-        inp = x[:,:n]
-        target = y[:,n-1:]
+    for x, y in test_loader:
+        x, y = x.to(device), y.to(device)
+        inp = x[:, :n]
+        target = y[:, n - 1 :]
         with torch.no_grad():
             predicted = model.generate(inp, n)
-        equal_rows = torch.all(target == predicted[:,n:], dim=1)
+        equal_rows = torch.all(target == predicted[:, n:], dim=1)
         correct += torch.sum(equal_rows).item()
         # break
-        
+
     print(f"No of times correct: {correct}/{len(test_dataset)}")
     print(f"No of times incorrect: {len(test_dataset) - correct}/{len(test_dataset)}")
 
 
 def train_sortDataset():
     path = "sorting_model.pk"
-    transformer_config = TransformerConfig(d_model=512, d_ff=2048,d_block=11,d_vocab=3,n_decoders=6)
-    train_transformer(SortDataset("train"), transformer_config,path)
+    transformer_config = TransformerConfig(
+        d_model=512, d_ff=2048, d_block=11, d_vocab=3, n_decoders=6
+    )
+    train_transformer(SortDataset("train"), transformer_config, path)
     # eval_transformer(transformer_config,path)
 
     # model = Transformer()
@@ -80,32 +85,38 @@ def train_sortDataset():
 
 def train_text(model_path, text_path):
     dataset = TextDataset("train", text_path)
-    transformer_config = TransformerConfig(d_model=512, 
-                                           d_ff=2048, 
-                                           d_block=dataset.block_length,
-                                           d_vocab=dataset.vocab_length)
-    train_transformer(dataset,transformer_config,model_path)
+    transformer_config = TransformerConfig(
+        d_model=512,
+        d_ff=2048,
+        d_block=dataset.block_length,
+        d_vocab=dataset.vocab_length,
+    )
+    train_transformer(dataset, transformer_config, model_path)
+
 
 def generate_text(model_path, text_path, start_text, max_new_tokens):
     dataset = TextDataset("test", text_path)
-    transformer_config = TransformerConfig(d_model=512,
-                                           d_ff=2048,
-                                           d_block=dataset.block_length,
-                                           d_vocab=dataset.vocab_length)
+    transformer_config = TransformerConfig(
+        d_model=512,
+        d_ff=2048,
+        d_block=dataset.block_length,
+        d_vocab=dataset.vocab_length,
+    )
     model = Transformer(transformer_config)
     checkpoint = torch.load(model_path)
-    model.load_state_dict(checkpoint['model_state_dict'])
+    model.load_state_dict(checkpoint["model_state_dict"])
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device=device)
     model.eval()
     inp = dataset.encode(start_text)
     with torch.no_grad():
-        predicted = model.generate(inp.view(1,-1).to(device),max_new_tokens)
+        predicted = model.generate(inp.view(1, -1).to(device), max_new_tokens)
     print(dataset.decode(predicted[0]))
- 
+
+
 if __name__ == "__main__":
     # train_sortDataset()
     model_path = "char_level_shakespeare.pk"
     text_path = "data/shakespeare.txt"
     train_text(model_path, text_path)
-    generate_text(model_path, text_path,"The gods be good unto us", 1000)
+    generate_text(model_path, text_path, "The gods be good unto us", 1000)
