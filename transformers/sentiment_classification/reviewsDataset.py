@@ -43,7 +43,7 @@ class reviewsDataset(Dataset):
         fpath, label = self.data[idx]
 
         review = open(fpath).read().replace("<br />","")
-        review = f"Review: The movie was awesome. Sentiment: Positive. Review: The performances were disappointing. Sentiment: Negative. Review: {review} Sentiment:"
+        review = f"{review}"
         review_ids_orig = torch.tensor(self.encode(review))
         review_ids = review_ids_orig[-self.max_length:]
         attention_mask = torch.ones(review_ids.size(),dtype=torch.bool)
