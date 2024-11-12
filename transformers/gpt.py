@@ -1,9 +1,8 @@
-from dataclasses import dataclass
 import torch
 from torch import nn
 from torch.nn import functional as F
 import math
-
+from gpt_config import GPTConfig
 
 class MultiHeadedAttention(nn.Module):
     def __init__(self, config):
@@ -61,20 +60,10 @@ class TransformerBlock(nn.Module):
 
     def forward(self, x, attention_mask):
     # def forward(self, x):
-        x += self.attn(self.ln_1(x),attention_mask)
+        x = x + self.attn(self.ln_1(x),attention_mask)
         # x += self.attn(self.ln_1(x))
-        x += self.mlp(self.ln_2(x))
+        x = x + self.mlp(self.ln_2(x))
         return x
-
-
-@dataclass
-class GPTConfig:
-    vocab_size: int = 50257
-    block_size: int = 1024
-    n_layers: int = 12
-    n_heads: int = 12
-    embedding_size: int = 768
-
 
 class GPT(nn.Module):
     """
@@ -100,6 +89,8 @@ class GPT(nn.Module):
             self.config.embedding_size, self.config.vocab_size, bias=False
         )
         self.transformer.wte.weight = (self.lm_head.weight)
+        if self.config.binary_classification_head:
+            self.classification_head = nn.Linear(self.config.embedding_size, 1,bias=False)
         # Init weights:
         self.apply(self._init_weights)
         # apply special scaled init to the residual projections, per GPT-2 paper
@@ -126,8 +117,16 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
+    def crop_block_size(self,block_size):
+        assert block_size < self.config.block_size
+        self.config.block_size = block_size
+        self.transformer.wpe.weight = nn.Parameter(self.transformer.wpe.weight[:block_size])
+        for block in self.transformer.h:
+            if hasattr(block.attn, "bias"):
+                block.attn.bias = block.attn.bias[:,:,:block_size,:block_size]
+
+
     def forward(self, idx,attention_mask,target=None):
-    # def forward(self, idx, target=None):
         device = idx.device
         b, t = idx.size()
         assert (
@@ -139,31 +138,52 @@ class GPT(nn.Module):
         pos_emb = self.transformer.wpe(pos)
         x = tok_emb + pos_emb
         for block in self.transformer.h:
-            # x = block(x)
             x = block(x,attention_mask)
         x = self.transformer.ln_f(x)
 
-        if target is not None:
+        if self.config.binary_classification_head:
+            logits = self.classification_head(x[:,-1,:])
+            if target is not None:
+                loss = F.binary_cross_entropy_with_logits(logits.view(-1), target.view(-1))
+            else:
+                loss = None
+        else:
 
             logits = self.lm_head(x)
-            loss = F.cross_entropy(
-                logits.view(-1, logits.size(-1)), target.view(-1), ignore_index=-1
-            )
-        else:
-            logits = self.lm_head(x)
-            # logits = self.lm_head(x[:,[-1],:])
-            loss = None
+            if target is not None:
+                loss = F.cross_entropy(
+                    logits.view(-1, logits.size(-1)), target.view(-1), ignore_index=-1
+                ) 
+            else:
+                loss = None
         return logits, loss
 
+    def configure_optimizers(self,weight_decay,learning_rate,betas,device_type):
+        param_dict = {pn:p for pn,p in self.named_parameters()}
+        # Filter out all params that do not require grad
+        param_dict = {pn:p for pn,p in param_dict.items() if p.requires_grad}
+        # Create optim groups. Weight tensors in embeddings and attention blocks decay, biases and layernorms don't
+        decay_params = [p for n,p in param_dict.items() if p.dim() >= 2]
+        nodecay_params = [p for n,p in param_dict.items() if p.dim() < 2]
+        optim_groups = [
+            {'params': decay_params, 'weight_decay': weight_decay},
+            {'params': nodecay_params, 'weight_decay': 0.0},
+            ]
+        num_decay_params = sum(p.numel() for p in decay_params)
+        num_nodecay_params = sum(p.numel() for p in nodecay_params)
+        print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
+        print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
+        optimizer = torch.optim.AdamW(optim_groups,lr=learning_rate,betas=betas)
+        return optimizer
+
     @classmethod
-    def from_pretrained(cls, model_type="gpt2"):
+    def from_pretrained(cls, model_type:str="gpt2",config:GPTConfig=GPTConfig()):
         """
         Downloads the Hugging Face model and copies the pre-trained weights on to the model defined here.
         """
         from transformers import GPT2LMHeadModel
 
         print(f"Loading pre-trained weights for {model_type}")
-        config = GPTConfig()
         model = GPT(config)
         sd = model.state_dict()
         sd_keys = sd.keys()
@@ -181,9 +201,10 @@ class GPT(nn.Module):
         sd_keys_hf = [
             k for k in sd_keys_hf if not k.endswith(".attn.bias")
         ]  # same, just the mask (buffer)
-        assert len(sd_keys_hf) == len(
-            sd_keys
-        ), f"mismatched keys: {len(sd_keys_hf)} != {len(sd_keys)}"
+        if config.binary_classification_head:
+            assert len(sd_keys_hf) == len(sd_keys) - 1 # nn Linear weights is the additional key
+        else:
+            assert len(sd_keys_hf) == len(sd_keys), f"mismatched keys: {len(sd_keys_hf)} != {len(sd_keys)}"
         transposed = [
             "attn.c_attn.weight",
             "attn.c_proj.weight",
@@ -196,7 +217,6 @@ class GPT(nn.Module):
                 with torch.no_grad():
                     sd[k].copy_(sd_hf[k].t())
             else:
-                # print(f"Hugging Face {k}: {sd_hf[k].shape}, Custom : {sd[k].shape}")
                 assert sd_hf[k].shape == sd[k].shape
                 with torch.no_grad():
                     sd[k].copy_(sd_hf[k])
@@ -204,7 +224,7 @@ class GPT(nn.Module):
         return model
 
     @torch.no_grad()
-    def generate(self, idx, max_new_tokens, temp=1.0, top_k=None):
+    def generate(self, idx:torch.Tensor, max_new_tokens:int, temp:float=1.0, top_k:int=None):
         """
         Take a conditioning sequence and generate max_new_tokens number of tokes. Predictions are fed back in to the model each time
         """
