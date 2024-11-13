@@ -8,6 +8,7 @@ from tqdm import tqdm
 import torch
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data import Dataset
+from torch.optim.lr_scheduler import StepLR
 from torch.utils.tensorboard import SummaryWriter
 from reviewsDataset import reviewsDataset
 from gpt import GPT
@@ -39,6 +40,7 @@ if tc.block_size < model.config.block_size:
     model.crop_block_size(block_size=tc.block_size)
 
 optimizer = model.configure_optimizers(tc.weight_decay, tc.learning_rate,(tc.beta1,tc.beta2),"mps")
+scheduler = StepLR(optimizer,step_size=1,gamma=0.1)
 model.to(device=device)
 if tc.init_from == "resume":
     optimizer.load_state_dict(checkpoint['optimizer'])
@@ -107,3 +109,4 @@ for epoch in range(tc.n_epochs):
                     torch.save(checkpoint,os.path.join(tc.out_dir,"ckpt.pt"))
 
         iter_num += 1
+    scheduler.step()
