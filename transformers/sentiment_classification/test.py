@@ -3,27 +3,15 @@ import torch
 import click
 from sentiment_classification.reviewsDataset import reviewsDataset
 from torch.utils.data.dataloader import DataLoader
-from torch.nn.utils.rnn import pad_sequence
 # Add directory to PYTHONPATH
 from gpt import GPT
+from gpt_utils import dynamic_padding
 
 device = "mps"
 model = GPT.from_pretrained(model_type="gpt2")
 model.to(device)
 model.eval()
 
-
-def dynamic_padding(data):
-    inputs = [item["input_ids"] for item in data]
-    attention_masks = [item["attention_mask"] for item in data]
-    labels = [item["label"] for item in data]
-    fpaths = [item["fpath"] for item in data]
-    lengths = [item["length"] for item in data]
-    inputs_padded = pad_sequence(inputs, batch_first=True,padding_value=0)
-    attention_masks_padded = pad_sequence(attention_masks,batch_first=True,padding_value=0)
-    labels = torch.tensor(labels)
-    lengths = torch.tensor(lengths)
-    return {"input_ids": inputs_padded, "attention_masks":attention_masks_padded, "labels":labels, "fpaths": fpaths, "lengths": lengths}
 
 @click.command()
 @click.option("--split",default="test",type=click.Choice(["test","train"]),help="Dataset split to use")
