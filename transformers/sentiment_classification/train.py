@@ -74,12 +74,14 @@ dl = DataLoader(train_set, batch_size=tc.batch_size,collate_fn=dynamic_padding,s
 best_val_loss = 1e9
 for epoch in range(tc.n_epochs):
     for batch in tqdm(dl):
+        optimizer.zero_grad(set_to_none=True)
         input_ids, attention_masks = batch["input_ids"].to(device), batch["attention_masks"].to(device)
         logits,loss = model(input_ids,attention_masks,target=batch["labels"].to(device))
         for param_group in optimizer.param_groups:
             param_group['lr'] = tc.learning_rate
 
-        optimizer.zero_grad(set_to_none=True)
+        if tc.grad_clip != 0.0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(),tc.grad_clip)
         loss.backward()
         optimizer.step()
 
