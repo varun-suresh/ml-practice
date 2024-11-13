@@ -8,6 +8,7 @@ from tqdm import tqdm
 import torch
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data import Dataset
+from torch.optim.lr_scheduler import StepLR
 from torch.utils.tensorboard import SummaryWriter
 from reviewsDataset import reviewsDataset
 from gpt import GPT
@@ -39,6 +40,7 @@ if tc.block_size < model.config.block_size:
     model.crop_block_size(block_size=tc.block_size)
 
 optimizer = model.configure_optimizers(tc.weight_decay, tc.learning_rate,(tc.beta1,tc.beta2),"mps")
+scheduler = StepLR(optimizer,step_size=1,gamma=0.1)
 model.to(device=device)
 if tc.init_from == "resume":
     optimizer.load_state_dict(checkpoint['optimizer'])
@@ -72,12 +74,14 @@ dl = DataLoader(train_set, batch_size=tc.batch_size,collate_fn=dynamic_padding,s
 best_val_loss = 1e9
 for epoch in range(tc.n_epochs):
     for batch in tqdm(dl):
+        optimizer.zero_grad(set_to_none=True)
         input_ids, attention_masks = batch["input_ids"].to(device), batch["attention_masks"].to(device)
         logits,loss = model(input_ids,attention_masks,target=batch["labels"].to(device))
         for param_group in optimizer.param_groups:
             param_group['lr'] = tc.learning_rate
 
-        optimizer.zero_grad(set_to_none=True)
+        if tc.grad_clip != 0.0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(),tc.grad_clip)
         loss.backward()
         optimizer.step()
 
@@ -107,3 +111,4 @@ for epoch in range(tc.n_epochs):
                     torch.save(checkpoint,os.path.join(tc.out_dir,"ckpt.pt"))
 
         iter_num += 1
+    scheduler.step()
