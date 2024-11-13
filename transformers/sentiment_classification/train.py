@@ -2,10 +2,13 @@
 Script to finetune GPT-2
 """
 import os
+from typing import Dict
 import click
 from tqdm import tqdm
 import torch
 from torch.utils.data.dataloader import DataLoader
+from torch.utils.data import Dataset
+from torch.utils.tensorboard import SummaryWriter
 from reviewsDataset import reviewsDataset
 from gpt import GPT
 from gpt_utils import dynamic_padding
@@ -16,6 +19,7 @@ from train_config import TrainConfig
 train_set = reviewsDataset(split="train")
 tc = TrainConfig()
 device = "mps"
+writer = SummaryWriter(log_dir=tc.out_dir)
 
 iter_num = 0
 if tc.init_from == "resume":
@@ -42,7 +46,7 @@ checkpoint = None
 
 # helps estimate an arbitrarily accurate loss over either split using many batches
 @torch.no_grad()
-def estimate_loss(train_set, val_set):
+def estimate_loss(train_set: Dataset, val_set: Dataset) -> Dict[str,float]:
     model.eval()
     train_dl = DataLoader(train_set,batch_size=tc.batch_size,collate_fn=dynamic_padding,shuffle=True)
     val_dl = DataLoader(val_set,batch_size=tc.batch_size,collate_fn=dynamic_padding,shuffle=True)
@@ -80,7 +84,13 @@ for epoch in range(tc.n_epochs):
         if iter_num % tc.eval_interval == 0:
             losses = estimate_loss(train_set,val_set)
             print(f"Step: {iter_num}\n Train Loss: {losses['train']}\nValidation Loss: {losses['val']}")
-        
+
+            writer.add_scalar("Loss/train",losses["train"],iter_num)
+            writer.add_scalar("Loss/val",losses["val"],iter_num)
+            for name,param in model.named_parameters():
+                writer.add_histogram(name, param, iter_num)
+                writer.add_histogram(f"{name}/grad",param.grad,iter_num)
+
             if losses["val"] < best_val_loss or tc.always_save_checkpoint:
                 best_val_loss = losses["val"]
                 if iter_num > 0:
@@ -95,4 +105,5 @@ for epoch in range(tc.n_epochs):
                     if not os.path.exists(tc.out_dir):
                         os.makedirs(tc.out_dir)
                     torch.save(checkpoint,os.path.join(tc.out_dir,"ckpt.pt"))
+
         iter_num += 1

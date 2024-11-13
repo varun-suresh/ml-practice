@@ -7,12 +7,11 @@ from dataclasses import dataclass
 class TrainConfig:
     # I/O
     out_dir = "out"
-    eval_interval = 2000
-    log_interval = 1
+    eval_interval = 500
     eval_iters = 20
     eval_only = False
     always_save_checkpoint = True
-    init_from = "resume" # or 'resume' - it will resume from the latest checkpoint
+    init_from = "gpt2" # 'gpt2' or 'resume' - it will resume from the latest checkpoint
 
     # data
     dataset = "imdb"
