@@ -13,7 +13,6 @@ from gpt_config import GPTConfig
 from train_config import TrainConfig
 
 
-config = GPTConfig(binary_classification_head=True)
 train_set = reviewsDataset(split="train")
 tc = TrainConfig()
 device = "mps"
@@ -23,13 +22,14 @@ if tc.init_from == "resume":
     print(f"Initializing from checkpoint in {tc.out_dir}")
     ckpt_path = os.path.join(tc.out_dir, "ckpt.pt")
     checkpoint = torch.load(ckpt_path, map_location=device)
-    # checkpoint_model_args = checkpoint['model_args']
-    model = GPT(config)
+    checkpoint_model_args = checkpoint['model_params']
+    model = GPT(GPTConfig(binary_classification_head=True,block_size=checkpoint_model_args.block_size))
     state_dict = checkpoint['model']
     iter_num = checkpoint["iter_num"]
+    model.load_state_dict(checkpoint["model"])
 elif tc.init_from == "gpt2":
     print(f"Initializing from GPT-2 parameters")
-    model = GPT.from_pretrained(config=config)
+    model = GPT.from_pretrained(config=GPTConfig(binary_classification_head=True))
 
 if tc.block_size < model.config.block_size:
     model.crop_block_size(block_size=tc.block_size)
@@ -85,6 +85,7 @@ for epoch in range(tc.n_epochs):
                 best_val_loss = losses["val"]
                 if iter_num > 0:
                     checkpoint = {"model": model.state_dict(),
+                                  "model_params": tc,
                                   "optimizer":optimizer.state_dict(),
                                   "iter_num": iter_num,
                                   "best_val_loss": best_val_loss,
