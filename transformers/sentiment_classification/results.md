@@ -36,3 +36,6 @@
 | (1024, 1152] |   80 |   21 |   14 |   65 |   0.805556 |    0.792079 | 0.851064 |
 | (1152, 1280] |   70 |   30 |    9 |   44 |   0.745098 |    0.7      | 0.886076 |
 | (1280, 1408] |   26 |    3 |    1 |    6 |   0.888889 |    0.896552 | 0.962963 |
+
+
+Note: For zero shot learning, the prompt included two sentences before the actual review. That is why the number of TP+FP+TN+FN in each of the bins are not the same.
