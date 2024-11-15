@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 import math
+import loralib as lora
 from gpt_config import GPTConfig
 
 class MultiHeadedAttention(nn.Module):
@@ -9,9 +10,12 @@ class MultiHeadedAttention(nn.Module):
         super(MultiHeadedAttention, self).__init__()
         self.config = config
         assert self.config.embedding_size % self.config.n_heads == 0
-        self.c_attn = nn.Linear(
-            self.config.embedding_size, 3 * self.config.embedding_size,
-        )
+        if config.use_lora:
+            self.c_attn = lora.MergedLinear(
+                self.config.embedding_size, 3 * self.config.embedding_size, r=config.r,enable_lora=[True,False,True]
+            )
+        else:
+            self.c_attn = nn.Linear(self.config.embedding_size, 3*self.config.embedding_size)
         self.c_proj = nn.Linear(self.config.embedding_size, self.config.embedding_size)
 
     def forward(self, x, attention_mask):
@@ -201,10 +205,14 @@ class GPT(nn.Module):
         sd_keys_hf = [
             k for k in sd_keys_hf if not k.endswith(".attn.bias")
         ]  # same, just the mask (buffer)
+        
+        sd_keys_len = len(sd_keys)
         if config.binary_classification_head:
-            assert len(sd_keys_hf) == len(sd_keys) - 1 # nn Linear weights is the additional key
-        else:
-            assert len(sd_keys_hf) == len(sd_keys), f"mismatched keys: {len(sd_keys_hf)} != {len(sd_keys)}"
+            sd_keys_len -= 1 # nn.Linear layer for the classification head.Since bias is set to False, it is only one key
+        if config.use_lora:
+            sd_keys_len -= config.n_heads * 2 # A and B for each attention layer
+
+        assert len(sd_keys_hf) == sd_keys_len, f"mismatched keys: {len(sd_keys_hf)} != {len(sd_keys)}"
         transposed = [
             "attn.c_attn.weight",
             "attn.c_proj.weight",

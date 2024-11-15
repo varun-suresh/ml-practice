@@ -7,6 +7,7 @@ from dataclasses import dataclass
 class TrainConfig:
     # I/O
     out_dir = "out"
+    checkpoint_name = "ckpt.pt"
     eval_interval = 500
     eval_iters = 20
     eval_only = False
@@ -27,3 +28,6 @@ class TrainConfig:
     beta2 = 0.95
     grad_clip = 1.0
 
+    # LoRA
+    use_lora = True
+    lora_checkpoint = "ckpt_lora.pt"

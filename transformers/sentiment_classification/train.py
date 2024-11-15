@@ -10,6 +10,7 @@ from torch.utils.data.dataloader import DataLoader
 from torch.utils.data import Dataset
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.tensorboard import SummaryWriter
+import loralib as lora
 from reviewsDataset import reviewsDataset
 from gpt import GPT
 from gpt_utils import dynamic_padding
@@ -25,22 +26,33 @@ writer = SummaryWriter(log_dir=tc.out_dir)
 iter_num = 0
 if tc.init_from == "resume":
     print(f"Initializing from checkpoint in {tc.out_dir}")
-    ckpt_path = os.path.join(tc.out_dir, "ckpt.pt")
-    checkpoint = torch.load(ckpt_path, map_location=device)
-    checkpoint_model_args = checkpoint['model_params']
-    model = GPT(GPTConfig(binary_classification_head=True,block_size=checkpoint_model_args.block_size))
+    if tc.use_lora:
+        print(f"Initializing GPT-2 params from the original GPT-2 and LoRA params from {tc.lora_checkpoint}")
+        model = GPT.from_pretrained(config=GPTConfig(binary_classification_head=True))
+        ckpt_path = os.path.join(tc.out_dir, tc.lora_checkpoint)
+        checkpoint = torch.load(ckpt_path, map_location=device)
+        model.load_state_dict(torch.load(checkpoint["model"]),strict=False)
+        checkpoint_model_args = checkpoint['model_params']
+ 
+    else:
+        ckpt_path = os.path.join(tc.out_dir, tc.checkpoint_name)
+        checkpoint = torch.load(ckpt_path, map_location=device)
+        checkpoint_model_args = checkpoint['model_params']
+        model = GPT(GPTConfig(binary_classification_head=True,block_size=checkpoint_model_args.block_size))
+        model.load_state_dict(checkpoint["model"])
     state_dict = checkpoint['model']
     iter_num = checkpoint["iter_num"]
-    model.load_state_dict(checkpoint["model"])
 elif tc.init_from == "gpt2":
     print(f"Initializing from GPT-2 parameters")
     model = GPT.from_pretrained(config=GPTConfig(binary_classification_head=True))
 
+if tc.use_lora:
+    lora.mark_only_lora_as_trainable(model)
 if tc.block_size < model.config.block_size:
     model.crop_block_size(block_size=tc.block_size)
 
 optimizer = model.configure_optimizers(tc.weight_decay, tc.learning_rate,(tc.beta1,tc.beta2),"mps")
-scheduler = StepLR(optimizer,step_size=1,gamma=0.1)
+scheduler = StepLR(optimizer,step_size=5000,gamma=0.1)
 model.to(device=device)
 if tc.init_from == "resume":
     optimizer.load_state_dict(checkpoint['optimizer'])
@@ -84,7 +96,7 @@ for epoch in range(tc.n_epochs):
             torch.nn.utils.clip_grad_norm_(model.parameters(),tc.grad_clip)
         loss.backward()
         optimizer.step()
-
+        scheduler.step()
         if iter_num % tc.eval_interval == 0:
             losses = estimate_loss(train_set,val_set)
             print(f"Step: {iter_num}\n Train Loss: {losses['train']}\nValidation Loss: {losses['val']}")
@@ -93,12 +105,12 @@ for epoch in range(tc.n_epochs):
             writer.add_scalar("Loss/val",losses["val"],iter_num)
             for name,param in model.named_parameters():
                 writer.add_histogram(name, param, iter_num)
-                writer.add_histogram(f"{name}/grad",param.grad,iter_num)
+                # writer.add_histogram(f"{name}/grad",param.grad,iter_num)
 
             if losses["val"] < best_val_loss or tc.always_save_checkpoint:
                 best_val_loss = losses["val"]
                 if iter_num > 0:
-                    checkpoint = {"model": model.state_dict(),
+                    checkpoint = {"model": lora.lora_state_dict(model),
                                   "model_params": tc,
                                   "optimizer":optimizer.state_dict(),
                                   "iter_num": iter_num,
@@ -108,7 +120,10 @@ for epoch in range(tc.n_epochs):
                     print(f"Saving checkpoint to {tc.out_dir}")
                     if not os.path.exists(tc.out_dir):
                         os.makedirs(tc.out_dir)
-                    torch.save(checkpoint,os.path.join(tc.out_dir,"ckpt.pt"))
+                    if tc.use_lora:
+                        output_path = os.path.join(tc.out_dir,tc.lora_checkpoint)
+                    else:
+                        output_path = os.path.join(tc.out_dir,tc.checkpoint_name)
+                    torch.save(checkpoint,output_path)
 
         iter_num += 1
-    scheduler.step()

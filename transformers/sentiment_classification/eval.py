@@ -13,9 +13,15 @@ from gpt import GPT
 
 device = "mps"
 config = GPTConfig(binary_classification_head=True,block_size=128)
-checkpoint = torch.load("out/ckpt.pt")
-model = GPT(config)
-model.load_state_dict(checkpoint["model"])
+if config.use_lora:
+    checkpoint = torch.load("out/ckpt_lora.pt")
+    model = GPT.from_pretrained(config=GPTConfig(binary_classification_head=True))
+    model.load_state_dict(checkpoint["model"],strict=False)
+else:
+    checkpoint = torch.load("out/ckpt.pt")
+    model = GPT(config)
+    model.load_state_dict(checkpoint["model"])
+
 model.to(device=device)
 model.eval()
 
@@ -23,12 +29,12 @@ model.eval()
 @click.option("--split",default="test",type=click.Choice(["test","train"]))
 @click.option("--batch_size",default=2)
 @click.option("--max_length",default=128)
-@click.option("--results_fname",default="fine_tuned.txt")
+@click.option("--results_fname",default="fine_tuned_lora.txt")
 @click.option("--subset",default=True)
 def run_inference(split,batch_size,max_length,results_fname,subset):
     rd = reviewsDataset(split=split,max_length=max_length)
     if subset:
-        subset_range = torch.arange(0,len(rd),10)
+        subset_range = torch.arange(0,len(rd),100)
         dl = DataLoader(torch.utils.data.Subset(rd,subset_range),batch_size=batch_size,collate_fn=dynamic_padding)
     else:
         dl = DataLoader(rd,batch_size=batch_size,collate_fn=dynamic_padding)
