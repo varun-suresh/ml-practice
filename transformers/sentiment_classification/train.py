@@ -30,8 +30,8 @@ if tc.init_from == "resume":
         print(f"Initializing GPT-2 params from the original GPT-2 and LoRA params from {tc.lora_checkpoint}")
         model = GPT.from_pretrained(config=GPTConfig(binary_classification_head=True))
         ckpt_path = os.path.join(tc.out_dir, tc.lora_checkpoint)
-        model.load_state_dict(torch.load(ckpt_path),strict=False)
         checkpoint = torch.load(ckpt_path, map_location=device)
+        model.load_state_dict(torch.load(checkpoint["model"]),strict=False)
         checkpoint_model_args = checkpoint['model_params']
  
     else:
@@ -52,7 +52,7 @@ if tc.block_size < model.config.block_size:
     model.crop_block_size(block_size=tc.block_size)
 
 optimizer = model.configure_optimizers(tc.weight_decay, tc.learning_rate,(tc.beta1,tc.beta2),"mps")
-scheduler = StepLR(optimizer,step_size=2000,gamma=0.1)
+scheduler = StepLR(optimizer,step_size=5000,gamma=0.1)
 model.to(device=device)
 if tc.init_from == "resume":
     optimizer.load_state_dict(checkpoint['optimizer'])

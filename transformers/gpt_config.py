@@ -9,3 +9,6 @@ class GPTConfig:
     embedding_size: int = 768
     binary_classification_head: bool = False
 
+    # LoRA params
+    use_lora = True
+    r = 8

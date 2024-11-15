@@ -16,7 +16,7 @@ config = GPTConfig(binary_classification_head=True,block_size=128)
 if config.use_lora:
     checkpoint = torch.load("out/ckpt_lora.pt")
     model = GPT.from_pretrained(config=GPTConfig(binary_classification_head=True))
-    model.load_state_dict(checkpoint,strict=False)
+    model.load_state_dict(checkpoint["model"],strict=False)
 else:
     checkpoint = torch.load("out/ckpt.pt")
     model = GPT(config)
