@@ -212,7 +212,7 @@ class GPT(nn.Module):
         if config.use_lora:
             sd_keys_len -= config.n_heads * 2 # A and B for each attention layer
 
-        assert len(sd_keys_hf) == sd_keys_len, f"mismatched keys: {len(sd_keys_hf)} != {len(sd_keys)}"
+        assert len(sd_keys_hf) == sd_keys_len, f"mismatched keys: {len(sd_keys_hf)} != {sd_keys_len}"
         transposed = [
             "attn.c_attn.weight",
             "attn.c_proj.weight",
@@ -228,7 +228,7 @@ class GPT(nn.Module):
                 assert sd_hf[k].shape == sd[k].shape
                 with torch.no_grad():
                     sd[k].copy_(sd_hf[k])
-
+        
         return model
 
     @torch.no_grad()

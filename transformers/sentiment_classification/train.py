@@ -28,11 +28,11 @@ if tc.init_from == "resume":
     print(f"Initializing from checkpoint in {tc.out_dir}")
     if tc.use_lora:
         print(f"Initializing GPT-2 params from the original GPT-2 and LoRA params from {tc.lora_checkpoint}")
-        model = GPT.from_pretrained(config=GPTConfig(binary_classification_head=True))
+        # model = GPT.from_pretrained(config=GPTConfig(binary_classification_head=True))
         ckpt_path = os.path.join(tc.out_dir, tc.lora_checkpoint)
         checkpoint = torch.load(ckpt_path, map_location=device)
-        model.load_state_dict(torch.load(checkpoint["model"]),strict=False)
-        checkpoint_model_args = checkpoint['model_params']
+        model.load_state_dict(checkpoint["model"])
+        # checkpoint_model_args = checkpoint['model_params']
  
     else:
         ckpt_path = os.path.join(tc.out_dir, tc.checkpoint_name)
@@ -48,11 +48,15 @@ elif tc.init_from == "gpt2":
 
 if tc.use_lora:
     lora.mark_only_lora_as_trainable(model)
+#TODO: Setup the config correctly so that it works in all cases
+# For now, making the classification head trainable
+model.classification_head.weight.requires_grad = True
+
 if tc.block_size < model.config.block_size:
     model.crop_block_size(block_size=tc.block_size)
 
 optimizer = model.configure_optimizers(tc.weight_decay, tc.learning_rate,(tc.beta1,tc.beta2),"mps")
-scheduler = StepLR(optimizer,step_size=5000,gamma=0.1)
+scheduler = StepLR(optimizer,step_size=10000,gamma=0.1)
 model.to(device=device)
 if tc.init_from == "resume":
     optimizer.load_state_dict(checkpoint['optimizer'])
@@ -110,7 +114,7 @@ for epoch in range(tc.n_epochs):
             if losses["val"] < best_val_loss or tc.always_save_checkpoint:
                 best_val_loss = losses["val"]
                 if iter_num > 0:
-                    checkpoint = {"model": lora.lora_state_dict(model),
+                    checkpoint = {"model": model.state_dict(),
                                   "model_params": tc,
                                   "optimizer":optimizer.state_dict(),
                                   "iter_num": iter_num,
