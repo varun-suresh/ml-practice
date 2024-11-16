@@ -16,6 +16,7 @@ config = GPTConfig(binary_classification_head=True,block_size=128)
 if config.use_lora:
     checkpoint = torch.load("out/ckpt_lora.pt")
     model = GPT.from_pretrained(config=GPTConfig(binary_classification_head=True))
+    model.crop_block_size(128)
     model.load_state_dict(checkpoint["model"],strict=False)
 else:
     checkpoint = torch.load("out/ckpt.pt")
@@ -34,7 +35,7 @@ model.eval()
 def run_inference(split,batch_size,max_length,results_fname,subset):
     rd = reviewsDataset(split=split,max_length=max_length)
     if subset:
-        subset_range = torch.arange(0,len(rd),100)
+        subset_range = torch.arange(0,len(rd),10)
         dl = DataLoader(torch.utils.data.Subset(rd,subset_range),batch_size=batch_size,collate_fn=dynamic_padding)
     else:
         dl = DataLoader(rd,batch_size=batch_size,collate_fn=dynamic_padding)
