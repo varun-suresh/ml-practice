@@ -14,120 +14,138 @@ import loralib as lora
 from reviewsDataset import reviewsDataset
 from gpt import GPT
 from gpt_utils import dynamic_padding
-from gpt_config import GPTConfig
+from gpt_config import GPTConfig, GPTConfigDefault
 from train_config import TrainConfig
 
 
-train_set = reviewsDataset(split="train")
-tc = TrainConfig()
-device = "mps"
-writer = SummaryWriter(log_dir=tc.out_dir)
+class Trainer:
+    def __init__(self,train_set: Dataset,val_set: Dataset,train_config:TrainConfig,model_config:GPTConfig):
+        self.train_set = train_set
+        self.val_set = val_set
+        self.train_config = train_config
+        self.model_config = model_config
+        self.writer = SummaryWriter(log_dir=self.train_config.out_dir)
+        self.iter_num = 0
 
-iter_num = 0
-if tc.init_from == "resume":
-    print(f"Initializing from checkpoint in {tc.out_dir}")
-    if tc.use_lora:
-        print(f"Initializing GPT-2 params from the original GPT-2 and LoRA params from {tc.lora_checkpoint}")
-        # model = GPT.from_pretrained(config=GPTConfig(binary_classification_head=True))
-        ckpt_path = os.path.join(tc.out_dir, tc.lora_checkpoint)
-        checkpoint = torch.load(ckpt_path, map_location=device)
-        model.load_state_dict(checkpoint["model"])
-        # checkpoint_model_args = checkpoint['model_params']
+    def load_model(self):
+
+        self.model = GPT.from_pretrained()
+        if self.model_config.use_lora:
+            self.model.setup_lora(self.model_config.r)
+        if self.model_config.block_size < GPTConfigDefault().block_size:
+            self.model.crop_block_size(self.model_config.block_size)
+        if self.train_config.init_from == "resume":
+            ckpt_path = os.path.join(self.train_config.out_dir,self.train_config.checkpoint_name)
+            print(f"Resuming training from {ckpt_path}")
+            self.ckpt = torch.load(ckpt_path,map_location=self.train_config.device)
+            try:
+                self.model.load_state_dict(checkpoint["model"])
+            except Exception as e:
+                print(f"Check the model config (using or not using LoRA, block size). The exception was {e}")
+        self.model.to(self.train_config.device)
+
+    def load_scheduler_optimizer(self):
+        self.optimizer = self.model.configure_optimizers(self.train_config.weight_decay, 
+                                                self.train_config.learning_rate,
+                                                (self.train_config.beta1,self.train_config.beta2),
+                                                self.train_config.device)
+        self.scheduler = StepLR(self.optimizer,
+                        step_size=self.train_config.step_size,
+                        gamma=0.1)
+        if self.train_config.init_from =="resume":
+            self.optimizer.load_state_dict(self.ckpt['optimizer'])
+            self.scheduler.load_state_dict(self.ckpt['scheduler'])
+    
  
-    else:
-        ckpt_path = os.path.join(tc.out_dir, tc.checkpoint_name)
-        checkpoint = torch.load(ckpt_path, map_location=device)
-        checkpoint_model_args = checkpoint['model_params']
-        model = GPT(GPTConfig(binary_classification_head=True,block_size=checkpoint_model_args.block_size))
-        model.load_state_dict(checkpoint["model"])
-    state_dict = checkpoint['model']
-    iter_num = checkpoint["iter_num"]
-elif tc.init_from == "gpt2":
-    print(f"Initializing from GPT-2 parameters")
-    model = GPT.from_pretrained(config=GPTConfig(binary_classification_head=True))
+    def train(self):
 
-if tc.use_lora:
-    lora.mark_only_lora_as_trainable(model)
-#TODO: Setup the config correctly so that it works in all cases
-# For now, making the classification head trainable
-model.classification_head.weight.requires_grad = True
+        self.load_model()
+        self.load_scheduler_optimizer()
+        if self.train_config.init_from == "resume":
+            start_iter = self.ckpt["iter_num"]
+            best_val_loss = self.ckpt["best_val_loss"]
+        else:
+            start_iter = 0
+            best_val_loss = 1e9
 
-if tc.block_size < model.config.block_size:
-    model.crop_block_size(block_size=tc.block_size)
+        dl = DataLoader(self.train_set, 
+                        batch_size=self.train_config.batch_size,
+                        collate_fn=dynamic_padding,
+                        shuffle=True)
+        for iter_num in tqdm(range(start_iter,self.train_config.max_iters)):
+            batch = next(iter(dl))
+            self.optimizer.zero_grad(set_to_none=True)
+            logits,loss = self.model(batch["input_ids"].to(self.train_config.device),
+                                    batch["attention_masks"].to(self.train_config.device),
+                                    target=batch["labels"].to(self.train_config.device))
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = self.train_config.learning_rate
 
-optimizer = model.configure_optimizers(tc.weight_decay, tc.learning_rate,(tc.beta1,tc.beta2),"mps")
-scheduler = StepLR(optimizer,step_size=10000,gamma=0.1)
-model.to(device=device)
-if tc.init_from == "resume":
-    optimizer.load_state_dict(checkpoint['optimizer'])
-checkpoint = None
+            if self.train_config.grad_clip != 0.0:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(),self.train_config.grad_clip)
+            loss.backward()
+            self.optimizer.step()
+            self.scheduler.step()
+            if iter_num % self.train_config.eval_interval == 0:
+                losses = self.estimate_loss()
+                print(f"Step: {iter_num}\n Train Loss: {losses['train']}\nValidation Loss: {losses['val']}")
 
-# helps estimate an arbitrarily accurate loss over either split using many batches
-@torch.no_grad()
-def estimate_loss(train_set: Dataset, val_set: Dataset) -> Dict[str,float]:
-    model.eval()
-    train_dl = DataLoader(train_set,batch_size=tc.batch_size,collate_fn=dynamic_padding,shuffle=True)
-    val_dl = DataLoader(val_set,batch_size=tc.batch_size,collate_fn=dynamic_padding,shuffle=True)
-    train_loss = torch.zeros(tc.eval_iters)
-    val_loss = torch.zeros(tc.eval_iters) 
-    for i in range(tc.eval_iters):
-        train_batch = next(iter(train_dl))
-        val_batch = next(iter(val_dl))
-        _, train_loss[i] = model(train_batch['input_ids'].to(device), train_batch['attention_masks'].to(device),target=train_batch['labels'].to(device))
-        _, val_loss[i] = model(val_batch['input_ids'].to(device),
-                               val_batch['attention_masks'].to(device),
-                               target=val_batch['labels'].to(device))
-    out = {}
-    out["train"] = train_loss.mean()
-    out["val"] = val_loss.mean()
-    model.train()
-    return out
+                writer.add_scalar("Loss/train",losses["train"],iter_num)
+                writer.add_scalar("Loss/val",losses["val"],iter_num)
+                for name,param in model.named_parameters():
+                    if param.grad == True:
+                        writer.add_histogram(name, param, iter_num)
+                        writer.add_histogram(f"{name}/grad",param.grad,iter_num)
+
+                if losses["val"] < best_val_loss or self.train_config.always_save_checkpoint:
+                    best_val_loss = losses["val"]
+                    if iter_num > 0:
+                        ckpt = {"model": self.model.state_dict(),
+                                    "train_config": self.train_config,
+                                    "optimizer":optimizer.state_dict(),
+                                    "scheduler": scheduler.state_dict(),
+                                    "iter_num": iter_num,
+                                    "best_val_loss": best_val_loss,
+                                    "config": tc}
+                        output_path = os.path.join(self.train_config.out_dir,self.train_config.checkpoint_name) 
+                        print(f"Saving checkpoint to {output_path}") 
+                        if not os.path.exists(self.train_config.out_dir):
+                            os.makedirs(self.train_config.out_dir)
+                        torch.save(ckpt,output_path)
 
 
-rd = reviewsDataset(split="train",max_length=tc.block_size)
-train_set, val_set = torch.utils.data.random_split(rd,[0.85,0.15])
-dl = DataLoader(train_set, batch_size=tc.batch_size,collate_fn=dynamic_padding,shuffle=True)
-best_val_loss = 1e9
-for epoch in range(tc.n_epochs):
-    for batch in tqdm(dl):
-        optimizer.zero_grad(set_to_none=True)
-        input_ids, attention_masks = batch["input_ids"].to(device), batch["attention_masks"].to(device)
-        logits,loss = model(input_ids,attention_masks,target=batch["labels"].to(device))
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = tc.learning_rate
+    @torch.no_grad()
+    def estimate_loss() -> Dict[str,float]:
+        self.model.eval()
+        train_dl = DataLoader(self.train_set,
+                            batch_size=self.train_config.batch_size,
+                            collate_fn=dynamic_padding,
+                            shuffle=True)
+        val_dl = DataLoader(self.val_set,
+                            batch_size=self.train_config.batch_size,
+                            collate_fn=dynamic_padding,
+                            shuffle=True)
+        train_loss = torch.zeros(self.train_config.eval_iters)
+        val_loss = torch.zeros(self.train_config.eval_iters)
+        for i in range(self.train_config.eval_iters):
+            train_batch = next(iter(train_dl))
+            val_batch = next(iter(val_dl))
+            _, train_loss[i] = self.model(train_batch['input_ids'].to(self.train_config.device), 
+                                    train_batch['attention_masks'].to(self.train_config.device),
+                                    target=train_batch['labels'].to(self.train_config.device))
+            _, val_loss[i] = self.model(val_batch['input_ids'].to(self.config.device),
+                               val_batch['attention_masks'].to(self.config.device),
+                               target=val_batch['labels'].to(self.config.device))
+        losses = {}
+        losses["train"] = train_loss.mean()
+        losses["val"] = val_loss.mean()
+        self.model.train()
+        return losses
 
-        if tc.grad_clip != 0.0:
-            torch.nn.utils.clip_grad_norm_(model.parameters(),tc.grad_clip)
-        loss.backward()
-        optimizer.step()
-        scheduler.step()
-        if iter_num % tc.eval_interval == 0:
-            losses = estimate_loss(train_set,val_set)
-            print(f"Step: {iter_num}\n Train Loss: {losses['train']}\nValidation Loss: {losses['val']}")
-
-            writer.add_scalar("Loss/train",losses["train"],iter_num)
-            writer.add_scalar("Loss/val",losses["val"],iter_num)
-            for name,param in model.named_parameters():
-                writer.add_histogram(name, param, iter_num)
-                # writer.add_histogram(f"{name}/grad",param.grad,iter_num)
-
-            if losses["val"] < best_val_loss or tc.always_save_checkpoint:
-                best_val_loss = losses["val"]
-                if iter_num > 0:
-                    checkpoint = {"model": model.state_dict(),
-                                  "model_params": tc,
-                                  "optimizer":optimizer.state_dict(),
-                                  "iter_num": iter_num,
-                                  "best_val_loss": best_val_loss,
-                                  "config": tc}
-                
-                    print(f"Saving checkpoint to {tc.out_dir}")
-                    if not os.path.exists(tc.out_dir):
-                        os.makedirs(tc.out_dir)
-                    if tc.use_lora:
-                        output_path = os.path.join(tc.out_dir,tc.lora_checkpoint)
-                    else:
-                        output_path = os.path.join(tc.out_dir,tc.checkpoint_name)
-                    torch.save(checkpoint,output_path)
-
-        iter_num += 1
+if __name__ == "__main__":
+    train_config = TrainConfig()
+    model_config = GPTConfig()
+    rd = reviewsDataset(split="train",max_length=train_config.block_size)
+    train_set, val_set = torch.utils.data.random_split(rd,[0.85,0.15])
+    trainer = Trainer(train_set,val_set,train_config,model_config)
+    trainer.train()

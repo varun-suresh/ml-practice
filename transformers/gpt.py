@@ -3,20 +3,18 @@ from torch import nn
 from torch.nn import functional as F
 import math
 import loralib as lora
-from gpt_config import GPTConfig
+from gpt_config import GPTConfig,GPTConfigDefault
 
 class MultiHeadedAttention(nn.Module):
     def __init__(self, config):
         super(MultiHeadedAttention, self).__init__()
         self.config = config
         assert self.config.embedding_size % self.config.n_heads == 0
-        if config.use_lora:
-            self.c_attn = lora.MergedLinear(
-                self.config.embedding_size, 3 * self.config.embedding_size, r=config.r,enable_lora=[True,False,True]
-            )
-        else:
-            self.c_attn = nn.Linear(self.config.embedding_size, 3*self.config.embedding_size)
+        self.c_attn = nn.Linear(self.config.embedding_size, 3*self.config.embedding_size)
         self.c_proj = nn.Linear(self.config.embedding_size, self.config.embedding_size)
+
+    def setup_lora(self, r):
+        self.c_attn = lora.MergedLinear(self.config.embedding_size, 3*self.config.embedding_size,r=r,enable_lora=[True,False,True])
 
     def forward(self, x, attention_mask):
     # def forward(self,x):
@@ -65,7 +63,6 @@ class TransformerBlock(nn.Module):
     def forward(self, x, attention_mask):
     # def forward(self, x):
         x = x + self.attn(self.ln_1(x),attention_mask)
-        # x += self.attn(self.ln_1(x))
         x = x + self.mlp(self.ln_2(x))
         return x
 
@@ -74,7 +71,7 @@ class GPT(nn.Module):
     Define the GPT-2 architecture and the ability to load the pretrained model
     """
 
-    def __init__(self, config):
+    def __init__(self, config:GPTConfig = GPTConfigDefault()):
         super(GPT, self).__init__()
         self.config = config
 
@@ -93,8 +90,6 @@ class GPT(nn.Module):
             self.config.embedding_size, self.config.vocab_size, bias=False
         )
         self.transformer.wte.weight = (self.lm_head.weight)
-        if self.config.binary_classification_head:
-            self.classification_head = nn.Linear(self.config.embedding_size, 1,bias=False)
         # Init weights:
         self.apply(self._init_weights)
         # apply special scaled init to the residual projections, per GPT-2 paper
@@ -137,7 +132,6 @@ class GPT(nn.Module):
             t <= self.config.block_size
         ), f"Sequence length {t} is larger than the block size {self.config.block_size}"
         pos = torch.arange(0, t, dtype=torch.long, device=device)
-
         tok_emb = self.transformer.wte(idx)
         pos_emb = self.transformer.wpe(pos)
         x = tok_emb + pos_emb
@@ -145,21 +139,13 @@ class GPT(nn.Module):
             x = block(x,attention_mask)
         x = self.transformer.ln_f(x)
 
-        if self.config.binary_classification_head:
-            logits = self.classification_head(x[:,-1,:])
-            if target is not None:
-                loss = F.binary_cross_entropy_with_logits(logits.view(-1), target.view(-1))
-            else:
-                loss = None
+        logits = self.lm_head(x)
+        if target is not None:
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)), target.view(-1), ignore_index=-1
+            ) 
         else:
-
-            logits = self.lm_head(x)
-            if target is not None:
-                loss = F.cross_entropy(
-                    logits.view(-1, logits.size(-1)), target.view(-1), ignore_index=-1
-                ) 
-            else:
-                loss = None
+            loss = None
         return logits, loss
 
     def configure_optimizers(self,weight_decay,learning_rate,betas,device_type):
@@ -188,7 +174,8 @@ class GPT(nn.Module):
         from transformers import GPT2LMHeadModel
 
         print(f"Loading pre-trained weights for {model_type}")
-        model = GPT(config)
+        # Load the pre-trained GPT-2 from Hugging Face 
+        model = GPT(GPTConfigDefault())
         sd = model.state_dict()
         sd_keys = sd.keys()
         sd_keys = [k for k in sd_keys if not k.endswith(".attn.bias")]
@@ -206,13 +193,9 @@ class GPT(nn.Module):
             k for k in sd_keys_hf if not k.endswith(".attn.bias")
         ]  # same, just the mask (buffer)
         
-        sd_keys_len = len(sd_keys)
-        if config.binary_classification_head:
-            sd_keys_len -= 1 # nn.Linear layer for the classification head.Since bias is set to False, it is only one key
-        if config.use_lora:
-            sd_keys_len -= config.n_heads * 2 # A and B for each attention layer
 
-        assert len(sd_keys_hf) == sd_keys_len, f"mismatched keys: {len(sd_keys_hf)} != {sd_keys_len}"
+
+        assert len(sd_keys_hf) == len(sd_keys), f"mismatched keys: {len(sd_keys_hf)} != {len(sd_keys)}"
         transposed = [
             "attn.c_attn.weight",
             "attn.c_proj.weight",
@@ -228,8 +211,12 @@ class GPT(nn.Module):
                 assert sd_hf[k].shape == sd[k].shape
                 with torch.no_grad():
                     sd[k].copy_(sd_hf[k])
-        
+
         return model
+    
+    def setup_lora(self, r:int):
+        for block in self.transformer.h:
+            block.attn.setup_lora(r)
 
     @torch.no_grad()
     def generate(self, idx:torch.Tensor, max_new_tokens:int, temp:float=1.0, top_k:int=None):
