@@ -11,6 +11,10 @@ class GPTConfigDefault:
 @dataclass
 class GPTConfig(GPTConfigDefault):
     block_size:int = 128
+    
+    # Load from a checkpoint
+    load_from_checkpoint : bool = False
+    checkpoint_path : str = ""
     # LoRA params
     use_lora:bool = True
     r:int = 8

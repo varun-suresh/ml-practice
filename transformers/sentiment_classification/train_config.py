@@ -15,9 +15,7 @@ class TrainConfig:
     init_from:str = "gpt2" # 'gpt2' or 'resume' - it will resume from the latest checkpoint
 
     # data
-    dataset:str = "imdb"
     batch_size:int = 2
-    block_size:int = 128
 
     # AdamW optimizer
     learning_rate:float = 6e-4
