@@ -10,7 +10,7 @@ class GPTConfigDefault:
 
 @dataclass
 class GPTConfig(GPTConfigDefault):
-    block_size = 128
+    block_size:int = 128
     # LoRA params
-    use_lora = True
-    r = 8
+    use_lora:bool = True
+    r:int = 8

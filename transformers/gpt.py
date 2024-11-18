@@ -138,12 +138,10 @@ class GPT(nn.Module):
         for block in self.transformer.h:
             x = block(x,attention_mask)
         x = self.transformer.ln_f(x)
-
-        logits = self.lm_head(x)
+        # To finetune, want to calculate the loss only on the last token
+        logits = self.lm_head(x[:,-1,:])
         if target is not None:
-            loss = F.cross_entropy(
-                logits.view(-1, logits.size(-1)), target.view(-1), ignore_index=-1
-            ) 
+            loss = F.cross_entropy(logits,target) 
         else:
             loss = None
         return logits, loss
@@ -167,7 +165,7 @@ class GPT(nn.Module):
         return optimizer
 
     @classmethod
-    def from_pretrained(cls, model_type:str="gpt2",config:GPTConfig=GPTConfig()):
+    def from_pretrained(cls, model_type:str="gpt2"):
         """
         Downloads the Hugging Face model and copies the pre-trained weights on to the model defined here.
         """
