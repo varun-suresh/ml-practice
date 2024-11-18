@@ -165,7 +165,7 @@ class GPT(nn.Module):
         return optimizer
 
     @classmethod
-    def from_pretrained(cls, model_type:str="gpt2"):
+    def from_pretrained(cls, model_type:str="gpt2",config:GPTConfig=GPTConfig()):
         """
         Downloads the Hugging Face model and copies the pre-trained weights on to the model defined here.
         """
@@ -209,7 +209,10 @@ class GPT(nn.Module):
                 assert sd_hf[k].shape == sd[k].shape
                 with torch.no_grad():
                     sd[k].copy_(sd_hf[k])
-
+        if config.block_size < model.config.block_size:
+            model.crop_block_size(config.block_size)
+        if config.use_lora:
+            model.setup_lora(config.r)
         return model
     
     def setup_lora(self, r:int):
