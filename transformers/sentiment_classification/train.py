@@ -5,6 +5,7 @@ import os
 from typing import Dict
 import click
 from tqdm import tqdm
+from dataclasses import asdict
 import torch
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data import Dataset
@@ -17,6 +18,7 @@ from gpt_utils import dynamic_padding
 from gpt_config import GPTConfig, GPTConfigDefault
 from train_config import TrainConfig
 
+torch.manual_seed(1367)
 
 class Trainer:
     def __init__(self,train_set: Dataset,val_set: Dataset,train_config:TrainConfig,model_config:GPTConfig):
@@ -77,7 +79,7 @@ class Trainer:
             self.optimizer.zero_grad(set_to_none=True)
             logits,loss = self.model(batch["input_ids"].to(self.train_config.device),
                                     batch["attention_masks"].to(self.train_config.device),
-                                    target=batch["labels"].to(self.train_config.device))
+                                    target=batch["label_idxs"].to(self.train_config.device))
             for param_group in self.optimizer.param_groups:
                 param_group['lr'] = self.train_config.learning_rate
 
@@ -90,23 +92,23 @@ class Trainer:
                 losses = self.estimate_loss()
                 print(f"Step: {iter_num}\n Train Loss: {losses['train']}\nValidation Loss: {losses['val']}")
 
-                writer.add_scalar("Loss/train",losses["train"],iter_num)
-                writer.add_scalar("Loss/val",losses["val"],iter_num)
-                for name,param in model.named_parameters():
-                    if param.grad == True:
-                        writer.add_histogram(name, param, iter_num)
-                        writer.add_histogram(f"{name}/grad",param.grad,iter_num)
+                self.writer.add_scalar("Loss/train",losses["train"],iter_num)
+                self.writer.add_scalar("Loss/val",losses["val"],iter_num)
+                for name,param in self.model.named_parameters():
+                    if param.requires_grad:
+                        self.writer.add_histogram(name, param, iter_num)
+                        self.writer.add_histogram(f"{name}/grad",param.grad,iter_num)
 
                 if losses["val"] < best_val_loss or self.train_config.always_save_checkpoint:
                     best_val_loss = losses["val"]
                     if iter_num > 0:
                         ckpt = {"model": self.model.state_dict(),
-                                    "train_config": self.train_config,
-                                    "optimizer":optimizer.state_dict(),
-                                    "scheduler": scheduler.state_dict(),
+                                    "train_config": asdict(self.train_config),
+                                    "optimizer":self.optimizer.state_dict(),
+                                    "scheduler": self.scheduler.state_dict(),
                                     "iter_num": iter_num,
                                     "best_val_loss": best_val_loss,
-                                    "config": tc}
+                                }
                         output_path = os.path.join(self.train_config.out_dir,self.train_config.checkpoint_name) 
                         print(f"Saving checkpoint to {output_path}") 
                         if not os.path.exists(self.train_config.out_dir):
@@ -115,7 +117,7 @@ class Trainer:
 
 
     @torch.no_grad()
-    def estimate_loss() -> Dict[str,float]:
+    def estimate_loss(self) -> Dict[str,float]:
         self.model.eval()
         train_dl = DataLoader(self.train_set,
                             batch_size=self.train_config.batch_size,
@@ -133,9 +135,9 @@ class Trainer:
             _, train_loss[i] = self.model(train_batch['input_ids'].to(self.train_config.device), 
                                     train_batch['attention_masks'].to(self.train_config.device),
                                     target=train_batch['labels'].to(self.train_config.device))
-            _, val_loss[i] = self.model(val_batch['input_ids'].to(self.config.device),
-                               val_batch['attention_masks'].to(self.config.device),
-                               target=val_batch['labels'].to(self.config.device))
+            _, val_loss[i] = self.model(val_batch['input_ids'].to(self.train_config.device),
+                               val_batch['attention_masks'].to(self.train_config.device),
+                               target=val_batch['labels'].to(self.train_config.device))
         losses = {}
         losses["train"] = train_loss.mean()
         losses["val"] = val_loss.mean()
