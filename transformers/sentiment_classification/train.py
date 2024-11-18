@@ -12,16 +12,16 @@ from torch.utils.data import Dataset
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.tensorboard import SummaryWriter
 import loralib as lora
-from reviewsDataset import reviewsDataset
+from sentiment_classification.reviewsDataset import reviewsDataset
 from gpt import GPT
 from gpt_utils import dynamic_padding
 from gpt_config import GPTConfig, GPTConfigDefault
-from train_config import TrainConfig
+from sentiment_classification.train_config import TrainConfig
 
 torch.manual_seed(1367)
 
 class Trainer:
-    def __init__(self,train_set: Dataset,val_set: Dataset,train_config:TrainConfig,model_config:GPTConfig):
+    def __init__(self,train_set: reviewsDataset,val_set: reviewsDataset,train_config:TrainConfig,model_config:GPTConfig):
         self.train_set = train_set
         self.val_set = val_set
         self.train_config = train_config
@@ -31,17 +31,13 @@ class Trainer:
 
     def load_model(self):
 
-        self.model = GPT.from_pretrained()
-        if self.model_config.use_lora:
-            self.model.setup_lora(self.model_config.r)
-        if self.model_config.block_size < GPTConfigDefault().block_size:
-            self.model.crop_block_size(self.model_config.block_size)
+        self.model = GPT.from_pretrained(config=self.model_config)
         if self.train_config.init_from == "resume":
             ckpt_path = os.path.join(self.train_config.out_dir,self.train_config.checkpoint_name)
             print(f"Resuming training from {ckpt_path}")
             self.ckpt = torch.load(ckpt_path,map_location=self.train_config.device)
             try:
-                self.model.load_state_dict(checkpoint["model"])
+                self.model.load_state_dict(self.ckpt["model"])
             except Exception as e:
                 print(f"Check the model config (using or not using LoRA, block size). The exception was {e}")
         self.model.to(self.train_config.device)
@@ -134,20 +130,12 @@ class Trainer:
             val_batch = next(iter(val_dl))
             _, train_loss[i] = self.model(train_batch['input_ids'].to(self.train_config.device), 
                                     train_batch['attention_masks'].to(self.train_config.device),
-                                    target=train_batch['labels'].to(self.train_config.device))
+                                    target=train_batch['label_idxs'].to(self.train_config.device))
             _, val_loss[i] = self.model(val_batch['input_ids'].to(self.train_config.device),
                                val_batch['attention_masks'].to(self.train_config.device),
-                               target=val_batch['labels'].to(self.train_config.device))
+                               target=val_batch['label_idxs'].to(self.train_config.device))
         losses = {}
         losses["train"] = train_loss.mean()
         losses["val"] = val_loss.mean()
         self.model.train()
         return losses
-
-if __name__ == "__main__":
-    train_config = TrainConfig()
-    model_config = GPTConfig()
-    rd = reviewsDataset(split="train",max_length=train_config.block_size)
-    train_set, val_set = torch.utils.data.random_split(rd,[0.85,0.15])
-    trainer = Trainer(train_set,val_set,train_config,model_config)
-    trainer.train()
