@@ -40,6 +40,8 @@ class Trainer:
                 self.model.load_state_dict(self.ckpt["model"])
             except Exception as e:
                 print(f"Check the model config (using or not using LoRA, block size). The exception was {e}")
+        if self.model_config.use_lora:
+            lora.mark_only_lora_as_trainable(self.model)
         self.model.to(self.train_config.device)
 
     def load_scheduler_optimizer(self):
@@ -59,6 +61,7 @@ class Trainer:
 
         self.load_model()
         self.load_scheduler_optimizer()
+
         if self.train_config.init_from == "resume":
             start_iter = self.ckpt["iter_num"]
             best_val_loss = self.ckpt["best_val_loss"]
