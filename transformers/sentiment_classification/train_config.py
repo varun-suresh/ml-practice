@@ -27,7 +27,9 @@ class TrainConfig:
 
     # Learning Rate scheduler : StepLR
     step_size:int = 10000
-
+    warmup_iters:int = 500
+    lr_decay_iters:int = 30000
+    min_lr: float = 6e-5
 
     #device
     device:str = "mps"
