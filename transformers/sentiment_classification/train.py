@@ -2,6 +2,7 @@
 Script to finetune GPT-2
 """
 import os
+import math
 from typing import Dict
 import click
 from tqdm import tqdm
@@ -30,11 +31,17 @@ class Trainer:
         self.iter_num = 0
 
     def get_lr(self):
+        """
+        Cosine learning rate with warmup
+        """
         if self.iter_num < self.train_config.warmup_iters:
             return self.train_config.learning_rate * self.iter_num / self.train_config.warmup_iters
         if self.iter_num > self.train_config.lr_decay_iters:
-            return self.train_config.min_learning_rate
-        return self.train_config.learning_rate
+            return self.train_config.min_lr
+        decay_ratio = (self.iter_num - self.train_config.warmup_iters) / (self.train_config.lr_decay_iters - self.train_config.warmup_iters)
+        assert 0 <= decay_ratio <= 1
+        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges 0..1
+        return self.train_config.min_lr + coeff * (self.train_config.learning_rate - self.train_config.min_lr)
 
     def load_model(self):
 
@@ -56,12 +63,12 @@ class Trainer:
                                                 self.get_lr(),
                                                 (self.train_config.beta1,self.train_config.beta2),
                                                 self.train_config.device)
-        self.scheduler = StepLR(self.optimizer,
-                        step_size=self.train_config.step_size,
-                        gamma=0.1)
+        # self.scheduler = StepLR(self.optimizer,
+        #                 step_size=self.train_config.step_size,
+        #                 gamma=0.1)
         if self.train_config.init_from =="resume":
             self.optimizer.load_state_dict(self.ckpt['optimizer'])
-            self.scheduler.load_state_dict(self.ckpt['scheduler'])
+            # self.scheduler.load_state_dict(self.ckpt['scheduler'])
     
  
     def train(self):
@@ -77,12 +84,12 @@ class Trainer:
             best_val_loss = 1e9
 
         dl = DataLoader(self.train_set, 
-                        batch_size=self.train_config.batch_size,
+                        batch_size=self.train_config.micro_batch_size,
                         collate_fn=dynamic_padding,
                         shuffle=True)
+        accumulation_steps = self.train_config.batch_size // self.train_config.micro_batch_size
         for self.iter_num in tqdm(range(start_iter,self.train_config.max_iters)):
             batch = next(iter(dl))
-            self.optimizer.zero_grad(set_to_none=True)
             logits,loss = self.model(batch["input_ids"].to(self.train_config.device),
                                     batch["attention_masks"].to(self.train_config.device),
                                     target=batch["label_idxs"].to(self.train_config.device))
@@ -91,9 +98,13 @@ class Trainer:
 
             if self.train_config.grad_clip != 0.0:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(),self.train_config.grad_clip)
+
+            loss = loss / accumulation_steps 
             loss.backward()
-            self.optimizer.step()
-            self.scheduler.step()
+            if self.iter_num % accumulation_steps == 0:
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+            # self.scheduler.step()
 
             if self.iter_num % self.train_config.eval_interval == 0:
                 losses = self.estimate_loss()
@@ -103,8 +114,10 @@ class Trainer:
                 self.writer.add_scalar("Loss/val",losses["val"],self.iter_num)
                 for name,param in self.model.named_parameters():
                     if param.requires_grad:
-                        self.writer.add_histogram(name, param, self.iter_num)
-                        self.writer.add_histogram(f"{name}/grad",param.grad,self.iter_num)
+                        if param.grad is not None:
+                            self.writer.add_scalar(f"Grad/{name}",param.grad.norm(),self.iter_num)
+                            self.writer.add_histogram(name, param, self.iter_num)
+                            self.writer.add_histogram(f"{name}/grad",param.grad,self.iter_num)
 
                 if losses["val"] < best_val_loss or self.train_config.always_save_checkpoint:
                     best_val_loss = losses["val"]
@@ -112,7 +125,7 @@ class Trainer:
                         ckpt = {"model": self.model.state_dict(),
                                     "train_config": asdict(self.train_config),
                                     "optimizer":self.optimizer.state_dict(),
-                                    "scheduler": self.scheduler.state_dict(),
+                                    # "scheduler": self.scheduler.state_dict(),
                                     "iter_num": self.iter_num,
                                     "best_val_loss": best_val_loss,
                                 }
@@ -127,11 +140,11 @@ class Trainer:
     def estimate_loss(self) -> Dict[str,float]:
         self.model.eval()
         train_dl = DataLoader(self.train_set,
-                            batch_size=self.train_config.batch_size,
+                            batch_size=self.train_config.micro_batch_size,
                             collate_fn=dynamic_padding,
                             shuffle=True)
         val_dl = DataLoader(self.val_set,
-                            batch_size=self.train_config.batch_size,
+                            batch_size=self.train_config.micro_batch_size,
                             collate_fn=dynamic_padding,
                             shuffle=True)
         train_loss = torch.zeros(self.train_config.eval_iters)
