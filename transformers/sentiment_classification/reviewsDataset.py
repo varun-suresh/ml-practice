@@ -14,7 +14,8 @@ class reviewsDataset(Dataset):
         self.split = split
         self.cache_dir = cache_dir
         self.enc = tiktoken.get_encoding("gpt2")
-        prompt_prefix = "Review: The movie was awesome. Sentiment: Positive. Review: The movie was disappointing. Sentiment: Negative. Review:"
+        # prompt_prefix = "Review: The movie was awesome. Sentiment: Positive. Review: The movie was disappointing. Sentiment: Negative. Review:"
+        prompt_prefix = "Review:"
         self.prompt_prefix_ids = self.encode(prompt_prefix)
         prompt_suffix = "Sentiment:"
         self.prompt_suffix_ids = self.encode(prompt_suffix)
