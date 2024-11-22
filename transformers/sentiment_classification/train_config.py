@@ -34,4 +34,4 @@ class TrainConfig:
     device:str = "mps"
 
     # Gradient Accumulation
-    micro_batch_size = 2
+    micro_batch_size:int = 2
