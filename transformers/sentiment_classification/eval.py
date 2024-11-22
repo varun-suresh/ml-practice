@@ -40,8 +40,8 @@ class Eval:
                 logits, _ = self.model(batch["input_ids"].to(self.eval_config.device),batch["attention_masks"].to(self.eval_config.device))
                 sentiment_idx = self.test_set.get_pos_neg_indices()
                 for i, fname in enumerate(batch["fpaths"]):
-                    pos = logits[i,sentiment_idx["positive"]]
-                    neg = logits[i,sentiment_idx["negative"]]
+                    pos = logits[i,0,sentiment_idx["positive"]]
+                    neg = logits[i,0,sentiment_idx["negative"]]
                     if pos > neg:
                         prediction = 1
                     else:

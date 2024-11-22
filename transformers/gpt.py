@@ -133,13 +133,15 @@ class GPT(nn.Module):
         ), f"Sequence length {t} is larger than the block size {self.config.block_size}"
         pos = torch.arange(0, t, dtype=torch.long, device=device)
         tok_emb = self.transformer.wte(idx)
+        # print(f"Token embedding: {tok_emb}")
         pos_emb = self.transformer.wpe(pos)
         x = tok_emb + pos_emb
         for block in self.transformer.h:
             x = block(x,attention_mask)
         x = self.transformer.ln_f(x)
         # To finetune, want to calculate the loss only on the last token
-        logits = self.lm_head(x[:,-1,:])
+        # print(attention_mask.sum(dim=1)-1)
+        logits = self.lm_head(x[:,attention_mask.sum(dim=1)-1,:])
         if target is not None:
             loss = F.cross_entropy(logits,target) 
         else:
@@ -213,6 +215,10 @@ class GPT(nn.Module):
             model.crop_block_size(config.block_size)
         if config.use_lora:
             model.setup_lora(config.r)
+        # model.transformer["wte"] = torch.cat((model.transformer["wte"],
+                                            #   torch.zeros((1,model.config.embedding_size)).unsqueeze(0)), dim=0)
+        # model.transformer["wpe"] = torch.cat((model.transformer["wpe"],
+                                            #   torch.zeros((1,model.config.embedding_size)).unsqueeze(0)), dim=0)
         return model
     
     def setup_lora(self, r:int):
