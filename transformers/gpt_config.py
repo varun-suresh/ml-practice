@@ -7,6 +7,7 @@ class GPTConfigDefault:
     n_layers: int = 12
     n_heads: int = 12
     embedding_size: int = 768
+    binary_classification_head: bool = False
 
 @dataclass
 class GPTConfig(GPTConfigDefault):
@@ -18,3 +19,6 @@ class GPTConfig(GPTConfigDefault):
     # LoRA params
     use_lora:bool = True
     r:int = 8
+    
+    # Use a binary classification head
+    binary_classification_head:bool = True
