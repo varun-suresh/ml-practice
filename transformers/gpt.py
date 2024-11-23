@@ -90,6 +90,8 @@ class GPT(nn.Module):
             self.config.embedding_size, self.config.vocab_size, bias=False
         )
         self.transformer.wte.weight = (self.lm_head.weight)
+        if config.binary_classification_head:
+            self.setup_binary_classification_head()
         # Init weights:
         self.apply(self._init_weights)
         # apply special scaled init to the residual projections, per GPT-2 paper
@@ -133,17 +135,26 @@ class GPT(nn.Module):
         ), f"Sequence length {t} is larger than the block size {self.config.block_size}"
         pos = torch.arange(0, t, dtype=torch.long, device=device)
         tok_emb = self.transformer.wte(idx)
+        # print(f"Token embedding: {tok_emb}")
         pos_emb = self.transformer.wpe(pos)
         x = tok_emb + pos_emb
         for block in self.transformer.h:
             x = block(x,attention_mask)
         x = self.transformer.ln_f(x)
         # To finetune, want to calculate the loss only on the last token
-        logits = self.lm_head(x[:,-1,:])
-        if target is not None:
-            loss = F.cross_entropy(logits,target) 
+        indices = attention_mask.sum(dim=1).tolist()
+        if self.config.binary_classification_head:
+            logits = self.classification_head(torch.stack([x[i,indices[i]-1,:] for i in range(len(indices))],dim=0))
+            if target is not None:
+                loss = F.binary_cross_entropy_with_logits(logits.squeeze(),target=target)
+            else:
+                loss = None
         else:
-            loss = None
+            logits = self.lm_head(torch.stack([x[i,indices[i]-1,:] for i in range(len(indices))],dim=0))
+            if target is not None:
+                loss = F.cross_entropy(logits,target) 
+            else:
+                loss = None
         return logits, loss
 
     def configure_optimizers(self,weight_decay,learning_rate,betas,device_type):
@@ -173,7 +184,7 @@ class GPT(nn.Module):
 
         print(f"Loading pre-trained weights for {model_type}")
         # Load the pre-trained GPT-2 from Hugging Face 
-        model = GPT(GPTConfigDefault())
+        model = GPT(GPTConfigDefault(binary_classification_head=config.binary_classification_head))
         sd = model.state_dict()
         sd_keys = sd.keys()
         sd_keys = [k for k in sd_keys if not k.endswith(".attn.bias")]
@@ -192,8 +203,10 @@ class GPT(nn.Module):
         ]  # same, just the mask (buffer)
         
 
-
-        assert len(sd_keys_hf) == len(sd_keys), f"mismatched keys: {len(sd_keys_hf)} != {len(sd_keys)}"
+        if config.binary_classification_head:
+            assert len(sd_keys_hf) == len(sd_keys) - 2
+        else:
+            assert len(sd_keys_hf) == len(sd_keys), f"mismatched keys: {len(sd_keys_hf)} != {len(sd_keys)}"
         transposed = [
             "attn.c_attn.weight",
             "attn.c_proj.weight",
@@ -213,11 +226,15 @@ class GPT(nn.Module):
             model.crop_block_size(config.block_size)
         if config.use_lora:
             model.setup_lora(config.r)
+
         return model
     
     def setup_lora(self, r:int):
         for block in self.transformer.h:
             block.attn.setup_lora(r)
+
+    def setup_binary_classification_head(self):
+        self.classification_head = nn.Linear(self.config.embedding_size,1)
 
     @torch.no_grad()
     def generate(self, idx:torch.Tensor, max_new_tokens:int, temp:float=1.0, top_k:int=None):

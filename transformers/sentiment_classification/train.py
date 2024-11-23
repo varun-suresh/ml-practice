@@ -56,7 +56,13 @@ class Trainer:
                 print(f"Check the model config (using or not using LoRA, block size). The exception was {e}")
         if self.model_config.use_lora:
             lora.mark_only_lora_as_trainable(self.model)
+        # Need to learn the classification layer. Explicitly set the gradient to True
+        if self.model_config.binary_classification_head:
+            self.model.classification_head.weight.requires_grad = True
         self.model.to(self.train_config.device)
+        if self.train_config.compile:
+            print(f"Compiling the model..")
+            self.model = torch.compile(self.model)
 
     def load_scheduler_optimizer(self):
         self.optimizer = self.model.configure_optimizers(self.train_config.weight_decay, 
@@ -90,9 +96,14 @@ class Trainer:
         accumulation_steps = self.train_config.batch_size // self.train_config.micro_batch_size
         for self.iter_num in tqdm(range(start_iter,self.train_config.max_iters)):
             batch = next(iter(dl))
-            logits,loss = self.model(batch["input_ids"].to(self.train_config.device),
+            if self.model_config.binary_classification_head:
+                target = batch["labels"]
+            else:
+                target = batch["label_idxs"]
+            logits, loss = self.model(batch["input_ids"].to(self.train_config.device),
                                     batch["attention_masks"].to(self.train_config.device),
-                                    target=batch["label_idxs"].to(self.train_config.device))
+                                    target=target.to(self.train_config.device))
+     
             for param_group in self.optimizer.param_groups:
                 param_group['lr'] = self.get_lr()
 
@@ -125,7 +136,6 @@ class Trainer:
                         ckpt = {"model": self.model.state_dict(),
                                     "train_config": asdict(self.train_config),
                                     "optimizer":self.optimizer.state_dict(),
-                                    # "scheduler": self.scheduler.state_dict(),
                                     "iter_num": self.iter_num,
                                     "best_val_loss": best_val_loss,
                                 }
@@ -152,12 +162,20 @@ class Trainer:
         for i in range(self.train_config.eval_iters):
             train_batch = next(iter(train_dl))
             val_batch = next(iter(val_dl))
+            if self.model_config.binary_classification_head:
+                target_train = train_batch['labels']
+                target_val = val_batch['labels']
+            else:
+                target_train = train_batch['label_idxs']
+                target_val = val_batch['label_idxs']
+
             _, train_loss[i] = self.model(train_batch['input_ids'].to(self.train_config.device), 
                                     train_batch['attention_masks'].to(self.train_config.device),
-                                    target=train_batch['label_idxs'].to(self.train_config.device))
+                                    target=target_train.to(self.train_config.device))
             _, val_loss[i] = self.model(val_batch['input_ids'].to(self.train_config.device),
-                               val_batch['attention_masks'].to(self.train_config.device),
-                               target=val_batch['label_idxs'].to(self.train_config.device))
+                            val_batch['attention_masks'].to(self.train_config.device),
+                            target=target_val.to(self.train_config.device))
+    
         losses = {}
         losses["train"] = train_loss.mean()
         losses["val"] = val_loss.mean()

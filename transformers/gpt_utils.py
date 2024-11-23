@@ -11,7 +11,7 @@ def dynamic_padding(data):
     inputs_padded = pad_sequence(inputs, batch_first=True,padding_value=0)
     attention_masks_padded = pad_sequence(attention_masks,batch_first=True,padding_value=0)
     labels = torch.tensor(labels,dtype=torch.float)
-    label_idxs = torch.tensor(label_idxs,dtype=torch.float)
+    label_idxs = torch.tensor(label_idxs,dtype=torch.long)
     lengths = torch.tensor(lengths)
     return {"input_ids": inputs_padded, "attention_masks":attention_masks_padded, "labels":labels, "fpaths": fpaths, "lengths": lengths, "label_idxs": label_idxs}
 

@@ -4,11 +4,13 @@ Evaluate fine-tuned GPT-2 on IMDb movie reviews
 
 from tqdm import tqdm
 import torch
+import torch.nn.functional as F
 from torch.utils.data.dataloader import DataLoader
 from sentiment_classification.reviewsDataset import reviewsDataset
 from gpt_utils import dynamic_padding
 from gpt_config import GPTConfig
 from sentiment_classification.eval_config import EvalConfig
+
 from gpt import GPT
 
 class Eval:
@@ -34,18 +36,23 @@ class Eval:
             dl = DataLoader(self.test_set,batch_size=self.eval_config.batch_size,collate_fn=dynamic_padding)
 
         results_file = open(self.eval_config.results_path,"w")
-        results_file.write("filename,length,label,prediction,logit_pos,logit_neg\n")
+        results_file.write("filename,length,label,prediction\n")
         for batch in tqdm(dl):
             with torch.no_grad():
                 logits, _ = self.model(batch["input_ids"].to(self.eval_config.device),batch["attention_masks"].to(self.eval_config.device))
-                sentiment_idx = self.test_set.get_pos_neg_indices()
-                for i, fname in enumerate(batch["fpaths"]):
-                    pos = logits[i,sentiment_idx["positive"]]
-                    neg = logits[i,sentiment_idx["negative"]]
-                    if pos > neg:
-                        prediction = 1
-                    else:
-                        prediction = 0
+                if self.model_config.binary_classification_head:
+                    predictions = F.sigmoid(logits)
+                    for i, fname in enumerate(batch["fpaths"]):
+                        results_file.write(f"{fname},{batch['lengths'][i]},{batch['labels'][i]},{predictions[i].item()}\n")
+                else:
+                    sentiment_idx = self.test_set.get_pos_neg_indices()
+                    for i, fname in enumerate(batch["fpaths"]):
+                        pos = logits[i,sentiment_idx["positive"]]
+                        neg = logits[i,sentiment_idx["negative"]]
+                        if pos > neg:
+                            prediction = 1
+                        else:
+                            prediction = 0
     
-                    results_file.write(f"{fname},{batch['lengths'][i]},{batch['labels'][i]},{prediction},{pos},{neg}\n")               
+                    results_file.write(f"{fname},{batch['lengths'][i]},{batch['labels'][i]},{prediction}\n")               
 
