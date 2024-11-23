@@ -57,7 +57,7 @@ class reviewsDataset(Dataset):
         review_ids = []
         orig_review_max_len = self.max_length - len(self.prompt_prefix_ids) - len(self.prompt_suffix_ids)
         review_ids.extend(self.prompt_prefix_ids)
-        review_ids.extend(review_ids_orig[-orig_review_max_len:])
+        review_ids.extend(review_ids_orig[orig_review_max_len-1:])
         review_ids.extend(self.prompt_suffix_ids)
         review_ids = torch.tensor(review_ids)
         attention_mask = torch.ones(review_ids.size(),dtype=torch.bool)
