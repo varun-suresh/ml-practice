@@ -12,6 +12,8 @@ class MultiHeadedAttention(nn.Module):
         assert self.config.embedding_size % self.config.n_heads == 0
         self.c_attn = nn.Linear(self.config.embedding_size, 3*self.config.embedding_size)
         self.c_proj = nn.Linear(self.config.embedding_size, self.config.embedding_size)
+        # Add dropout for regularization
+        self.resid_dropout = nn.Dropout(config.dropout)
 
     def setup_lora(self, r):
         self.c_attn = lora.MergedLinear(self.config.embedding_size, 3*self.config.embedding_size,r=r,enable_lora=[True,False,True])
@@ -29,12 +31,21 @@ class MultiHeadedAttention(nn.Module):
         v = v.view(
             B, T, self.config.n_heads, self.config.embedding_size // self.config.n_heads
         ).transpose(1, 2)
+        if self.config.debug:
+            att = (q @ k.transpose(-2,-1)) * (1.0 * math.sqrt(k.size(-1)))
+            att = F.softmax(att,dim=-1)
+            
+            
         y = torch.nn.functional.scaled_dot_product_attention(
-            q, k, v, attn_mask=attention_mask.view(B,1,1,-1),
+            q, k, v, attn_mask=attention_mask.view(B,1,1,-1),dropout_p=self.config.dropout if self.training else 0.0,
         )
         # y = torch.nn.functional.scaled_dot_product_attention(q,k,v,is_causal=True)
         y = y.transpose(1, 2).contiguous().view(B, T, C)
-        y = self.c_proj(y)
+        y = self.resid_dropout(self.c_proj(y))
+
+        if self.config.debug:
+            print(att.size())
+            return y, att[:,:,-1,:]
         return y
 
 
@@ -44,17 +55,20 @@ class FeedForward(nn.Module):
         self.c_fc = nn.Linear(config.embedding_size, 4 * config.embedding_size)
         self.gelu = nn.GELU()
         self.c_proj = nn.Linear(4 * config.embedding_size, config.embedding_size)
+        self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
         x = self.c_fc(x)
         x = self.gelu(x)
         x = self.c_proj(x)
+        x = self.dropout(x)
         return x
 
 
 class TransformerBlock(nn.Module):
     def __init__(self, config):
         super(TransformerBlock, self).__init__()
+        self.config = config
         self.ln_1 = nn.LayerNorm(config.embedding_size)
         self.attn = MultiHeadedAttention(config)
         self.ln_2 = nn.LayerNorm(config.embedding_size)
@@ -62,9 +76,14 @@ class TransformerBlock(nn.Module):
 
     def forward(self, x, attention_mask):
     # def forward(self, x):
-        x = x + self.attn(self.ln_1(x),attention_mask)
+        if self.config.debug:
+            z, att_out = self.attn(self.ln_1(x), attention_mask)
+            x = x + z
+        else:
+            att_out = None
+            x = x + self.attn(self.ln_1(x),attention_mask)
         x = x + self.mlp(self.ln_2(x))
-        return x
+        return x, att_out
 
 class GPT(nn.Module):
     """
@@ -79,6 +98,7 @@ class GPT(nn.Module):
             {
                 "wte": nn.Embedding(self.config.vocab_size, self.config.embedding_size),
                 "wpe": nn.Embedding(self.config.block_size, self.config.embedding_size),
+                "drop": nn.Dropout(self.config.dropout),
                 "h": nn.ModuleList(
                     TransformerBlock(self.config) for _ in range(self.config.n_layers)
                 ),
@@ -137,9 +157,13 @@ class GPT(nn.Module):
         tok_emb = self.transformer.wte(idx)
         # print(f"Token embedding: {tok_emb}")
         pos_emb = self.transformer.wpe(pos)
-        x = tok_emb + pos_emb
+        x = self.transformer.drop(tok_emb + pos_emb)
         for block in self.transformer.h:
-            x = block(x,attention_mask)
+            if self.config.debug:
+                x, att_out = block(x,attention_mask)
+            else:
+                x = block(x,attention_mask)
+                att_out = None
         x = self.transformer.ln_f(x)
         # To finetune, want to calculate the loss only on the last token
         indices = attention_mask.sum(dim=1).tolist()
@@ -155,7 +179,7 @@ class GPT(nn.Module):
                 loss = F.cross_entropy(logits,target) 
             else:
                 loss = None
-        return logits, loss
+        return logits, loss, att_out
 
     def configure_optimizers(self,weight_decay,learning_rate,betas,device_type):
         param_dict = {pn:p for pn,p in self.named_parameters()}
@@ -184,7 +208,7 @@ class GPT(nn.Module):
 
         print(f"Loading pre-trained weights for {model_type}")
         # Load the pre-trained GPT-2 from Hugging Face 
-        model = GPT(GPTConfigDefault(binary_classification_head=config.binary_classification_head))
+        model = GPT(GPTConfigDefault(binary_classification_head=config.binary_classification_head,dropout=config.dropout,debug=config.debug))
         sd = model.state_dict()
         sd_keys = sd.keys()
         sd_keys = [k for k in sd_keys if not k.endswith(".attn.bias")]
