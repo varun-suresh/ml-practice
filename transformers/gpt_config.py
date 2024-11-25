@@ -8,6 +8,8 @@ class GPTConfigDefault:
     n_heads: int = 12
     embedding_size: int = 768
     binary_classification_head: bool = False
+    dropout: float = 0.0
+    debug:bool = False
 
 @dataclass
 class GPTConfig(GPTConfigDefault):
@@ -22,3 +24,9 @@ class GPTConfig(GPTConfigDefault):
     
     # Use a binary classification head
     binary_classification_head:bool = True
+
+    # Regularizaztion
+    dropout: float = 0.1
+
+    # For debugging
+    debug:bool = False
