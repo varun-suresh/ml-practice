@@ -1,5 +1,6 @@
 # IMDb reviews dataloader
 import os
+import re
 import torch
 import tiktoken
 from torch.utils.data import Dataset
@@ -15,9 +16,10 @@ class reviewsDataset(Dataset):
         self.cache_dir = cache_dir
         self.enc = tiktoken.get_encoding("gpt2")
         # prompt_prefix = "Review: The movie was awesome. Sentiment: Positive. Review: The movie was disappointing. Sentiment: Negative. Review:"
-        prompt_prefix = "Review:"
+        prompt_prefix = "Review: "
         self.prompt_prefix_ids = self.encode(prompt_prefix)
-        prompt_suffix = "Sentiment:"
+        prompt_suffix = " Sentiment:"
+        # prompt_suffix = "The sentiment of this review is"
         self.prompt_suffix_ids = self.encode(prompt_suffix)
         self.max_length = max_length
         self.summary_stats = {}
@@ -39,6 +41,16 @@ class reviewsDataset(Dataset):
     def get_pos_neg_indices(self):
         return {"positive": self.pos_index, "negative": self.neg_index}
 
+    def _preprocess_text(self,review:str) -> str:
+        """
+        Remove HTML tags, additional spaces, make everything lower case
+        """
+        # review = review.lower()
+        review = re.sub(r"<.*?>","",review)
+        # review = re.sub(r"[^a-zA-Z0-9'!.,;:\s]","",review)
+        # review = re.sub(r"\s+"," ",review).strip()
+        return review
+
     def __len__(self):
         """
         Returns the number of examples in the train/test set as specified while initializing
@@ -51,13 +63,14 @@ class reviewsDataset(Dataset):
     def __getitem__(self, idx: int):
         fpath, label, label_idx = self.data[idx]
 
-        review = open(fpath).read().replace("<br />","")
-        review = f"{review}"
+        review = open(fpath).read()
+        review = self._preprocess_text(review)
         review_ids_orig = self.encode(review)
         review_ids = []
         orig_review_max_len = self.max_length - len(self.prompt_prefix_ids) - len(self.prompt_suffix_ids)
         review_ids.extend(self.prompt_prefix_ids)
         review_ids.extend(review_ids_orig[0:orig_review_max_len-1])
+        # review_ids.extend(review_ids_orig[-orig_review_max_len:])
         review_ids.extend(self.prompt_suffix_ids)
         review_ids = torch.tensor(review_ids)
         attention_mask = torch.ones(review_ids.size(),dtype=torch.bool)
