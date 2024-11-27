@@ -14,6 +14,9 @@ class MultiHeadedAttention(nn.Module):
         self.c_proj = nn.Linear(self.config.embedding_size, self.config.embedding_size)
         # Add dropout for regularization
         self.resid_dropout = nn.Dropout(config.dropout)
+        # causal mask to ensure that attention is only applied to the left in the input sequence
+        # self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
+                                        # .view(1, 1, config.block_size, config.block_size))
 
     def setup_lora(self, r):
         self.c_attn = lora.MergedLinear(self.config.embedding_size, 3*self.config.embedding_size,r=r,enable_lora=[True,False,True])
@@ -33,6 +36,8 @@ class MultiHeadedAttention(nn.Module):
         ).transpose(1, 2)
         if self.config.debug:
             att = (q @ k.transpose(-2,-1)) * (1.0 * math.sqrt(k.size(-1)))
+            # bias = torch.tril(torch.ones(self.config.block_size,self.config.block_size)).view(1,1,self.config.block_size,self.config.block_size)
+            # att = att.masked_fill(bias[:,:,:T,:T] == 0, float('-inf'))
             att = F.softmax(att,dim=-1)
             
             
@@ -44,8 +49,8 @@ class MultiHeadedAttention(nn.Module):
         y = self.resid_dropout(self.c_proj(y))
 
         if self.config.debug:
-            print(att.size())
-            return y, att[:,:,-1,:]
+            # print(att.size())
+            return y, att
         return y
 
 
@@ -158,12 +163,14 @@ class GPT(nn.Module):
         # print(f"Token embedding: {tok_emb}")
         pos_emb = self.transformer.wpe(pos)
         x = self.transformer.drop(tok_emb + pos_emb)
+        att_out = []
         for block in self.transformer.h:
             if self.config.debug:
-                x, att_out = block(x,attention_mask)
+                x, att_layer = block(x,attention_mask)
             else:
-                x = block(x,attention_mask)
-                att_out = None
+                x , _ = block(x,attention_mask)
+                att_layer = None
+            att_out.append(att_layer)
         x = self.transformer.ln_f(x)
         # To finetune, want to calculate the loss only on the last token
         indices = attention_mask.sum(dim=1).tolist()
@@ -174,6 +181,7 @@ class GPT(nn.Module):
             else:
                 loss = None
         else:
+            # logits = self.lm_head(x[:,-1,:])
             logits = self.lm_head(torch.stack([x[i,indices[i]-1,:] for i in range(len(indices))],dim=0))
             if target is not None:
                 loss = F.cross_entropy(logits,target) 
@@ -228,7 +236,7 @@ class GPT(nn.Module):
         
 
         if config.binary_classification_head:
-            assert len(sd_keys_hf) == len(sd_keys) - 2
+            assert len(sd_keys_hf) == len(sd_keys) - 2, f"mismatched keys: {len(sd_keys_hf)} != {len(sd_keys) - 2}"
         else:
             assert len(sd_keys_hf) == len(sd_keys), f"mismatched keys: {len(sd_keys_hf)} != {len(sd_keys)}"
         transposed = [
