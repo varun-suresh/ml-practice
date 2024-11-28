@@ -39,7 +39,7 @@ class Eval:
         results_file.write("filename,length,label,prediction\n")
         for batch in tqdm(dl):
             with torch.no_grad():
-                logits, _ = self.model(batch["input_ids"].to(self.eval_config.device),batch["attention_masks"].to(self.eval_config.device))
+                logits, _,_ = self.model(batch["input_ids"].to(self.eval_config.device),batch["attention_masks"].to(self.eval_config.device))
                 if self.model_config.binary_classification_head:
                     predictions = F.sigmoid(logits)
                     for i, fname in enumerate(batch["fpaths"]):
