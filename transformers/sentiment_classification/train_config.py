@@ -31,7 +31,7 @@ class TrainConfig:
     min_lr: float = 6e-5
 
     #device
-    device:str = "mps"
+    device:str = "cuda"
 
     # Gradient Accumulation
-    micro_batch_size:int = 2    
+    micro_batch_size:int = 2   
