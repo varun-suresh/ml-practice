@@ -4,7 +4,8 @@ from dataclasses import dataclass
 class EvalConfig:
 
     # Device params
-    device: str = "mps"
+    device: str = "cuda"
+    compile: bool = False
 
     # I/O
     results_path: str = "results.txt"
