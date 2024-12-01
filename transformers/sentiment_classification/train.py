@@ -7,6 +7,7 @@ from typing import Dict
 import click
 from tqdm import tqdm
 from dataclasses import asdict
+from contextlib import nullcontext
 import torch
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data import Dataset
@@ -29,7 +30,7 @@ class Trainer:
         self.model_config = model_config
         self.writer = SummaryWriter(log_dir=self.train_config.out_dir)
         self.iter_num = 0
-
+    
     def get_lr(self):
         """
         Cosine learning rate with warmup
@@ -54,6 +55,10 @@ class Trainer:
                 self.model.load_state_dict(self.ckpt["model"])
             except Exception as e:
                 print(f"Check the model config (using or not using LoRA, block size). The exception was {e}")
+        
+        if self.model_config.freeze_layers > 0:
+            self.freeze_layers(self.train_config.freeze_layers)
+
         if self.model_config.use_lora:
             lora.mark_only_lora_as_trainable(self.model)
         # Need to learn the classification layer. Explicitly set the gradient to True
@@ -64,23 +69,31 @@ class Trainer:
             print(f"Compiling the model..")
             self.model = torch.compile(self.model)
 
-    def load_scheduler_optimizer(self):
+
+    def freeze_layers(self,N):
+        """
+        Makes requires grad to false for the first N transformer blocks
+        """
+        for pn,p in self.model.named_parameters():
+            if "wpe" in pn or "wte" in pn:
+                p.requires_grad = False
+            elif pn.split(".")[1] == "h" and int(pn.split(".")[2]) < N:
+                p.requires_grad = False
+
+    def load_optimizer(self):
         self.optimizer = self.model.configure_optimizers(self.train_config.weight_decay, 
                                                 self.get_lr(),
                                                 (self.train_config.beta1,self.train_config.beta2),
                                                 self.train_config.device)
-        # self.scheduler = StepLR(self.optimizer,
-        #                 step_size=self.train_config.step_size,
-        #                 gamma=0.1)
+
         if self.train_config.init_from =="resume":
             self.optimizer.load_state_dict(self.ckpt['optimizer'])
-            # self.scheduler.load_state_dict(self.ckpt['scheduler'])
     
  
     def train(self):
 
         self.load_model()
-        self.load_scheduler_optimizer()
+        self.load_optimizer()
 
         if self.train_config.init_from == "resume":
             start_iter = self.ckpt["iter_num"]
@@ -100,7 +113,7 @@ class Trainer:
                 target = batch["labels"]
             else:
                 target = batch["label_idxs"]
-            logits, loss = self.model(batch["input_ids"].to(self.train_config.device),
+            logits, loss, _ = self.model(batch["input_ids"].to(self.train_config.device),
                                     batch["attention_masks"].to(self.train_config.device),
                                     target=target.to(self.train_config.device))
      
@@ -115,7 +128,6 @@ class Trainer:
             if self.iter_num % accumulation_steps == 0:
                 self.optimizer.step()
                 self.optimizer.zero_grad()
-            # self.scheduler.step()
 
             if self.iter_num % self.train_config.eval_interval == 0:
                 losses = self.estimate_loss()
@@ -169,10 +181,10 @@ class Trainer:
                 target_train = train_batch['label_idxs']
                 target_val = val_batch['label_idxs']
 
-            _, train_loss[i] = self.model(train_batch['input_ids'].to(self.train_config.device), 
+            _, train_loss[i],_ = self.model(train_batch['input_ids'].to(self.train_config.device), 
                                     train_batch['attention_masks'].to(self.train_config.device),
                                     target=target_train.to(self.train_config.device))
-            _, val_loss[i] = self.model(val_batch['input_ids'].to(self.train_config.device),
+            _, val_loss[i],_ = self.model(val_batch['input_ids'].to(self.train_config.device),
                             val_batch['attention_masks'].to(self.train_config.device),
                             target=target_val.to(self.train_config.device))
     
