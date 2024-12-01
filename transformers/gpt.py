@@ -3,7 +3,7 @@ from torch import nn
 from torch.nn import functional as F
 import math
 import loralib as lora
-from gpt_config import GPTConfig,GPTConfigDefault
+from gpt_config import GPTConfig,GPTConfigDefault 
 
 class MultiHeadedAttention(nn.Module):
     def __init__(self, config):
@@ -14,14 +14,12 @@ class MultiHeadedAttention(nn.Module):
         self.c_proj = nn.Linear(self.config.embedding_size, self.config.embedding_size)
         # Add dropout for regularization
         self.resid_dropout = nn.Dropout(config.dropout)
-        # causal mask to ensure that attention is only applied to the left in the input sequence
-        # self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
-                                        # .view(1, 1, config.block_size, config.block_size))
+
 
     def setup_lora(self, r):
         self.c_attn = lora.MergedLinear(self.config.embedding_size, 3*self.config.embedding_size,r=r,enable_lora=[True,False,True])
 
-    def forward(self, x, attention_mask):
+    def forward(self, x):
     # def forward(self,x):
         B, T, C = x.shape  # Batch Size, Block Size/ Sequence Length, Embedding Size
         q, k, v = self.c_attn(x).split(self.config.embedding_size, dim=2)
@@ -36,20 +34,16 @@ class MultiHeadedAttention(nn.Module):
         ).transpose(1, 2)
         if self.config.debug:
             att = (q @ k.transpose(-2,-1)) * (1.0 * math.sqrt(k.size(-1)))
-            # bias = torch.tril(torch.ones(self.config.block_size,self.config.block_size)).view(1,1,self.config.block_size,self.config.block_size)
-            # att = att.masked_fill(bias[:,:,:T,:T] == 0, float('-inf'))
+            bias = torch.tril(torch.ones(self.config.block_size,self.config.block_size)).view(1,1,self.config.block_size,self.config.block_size)
+            att = att.masked_fill(bias[:,:,:T,:T] == 0, float('-inf'))
             att = F.softmax(att,dim=-1)
             
             
-        y = torch.nn.functional.scaled_dot_product_attention(
-            q, k, v, attn_mask=attention_mask.view(B,1,1,-1),dropout_p=self.config.dropout if self.training else 0.0,
-        )
-        # y = torch.nn.functional.scaled_dot_product_attention(q,k,v,is_causal=True)
+        y = torch.nn.functional.scaled_dot_product_attention(q,k,v,is_causal=True,dropout_p=self.config.dropout)
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         y = self.resid_dropout(self.c_proj(y))
 
         if self.config.debug:
-            # print(att.size())
             return y, att
         return y
 
@@ -79,14 +73,14 @@ class TransformerBlock(nn.Module):
         self.ln_2 = nn.LayerNorm(config.embedding_size)
         self.mlp = FeedForward(config)
 
-    def forward(self, x, attention_mask):
+    def forward(self, x):
     # def forward(self, x):
         if self.config.debug:
-            z, att_out = self.attn(self.ln_1(x), attention_mask)
+            z, att_out = self.attn(self.ln_1(x))
             x = x + z
         else:
             att_out = None
-            x = x + self.attn(self.ln_1(x),attention_mask)
+            x = x + self.attn(self.ln_1(x))
         x = x + self.mlp(self.ln_2(x))
         return x, att_out
 
@@ -166,9 +160,9 @@ class GPT(nn.Module):
         att_out = []
         for block in self.transformer.h:
             if self.config.debug:
-                x, att_layer = block(x,attention_mask)
+                x, att_layer = block(x)
             else:
-                x , _ = block(x,attention_mask)
+                x , _ = block(x)
                 att_layer = None
             att_out.append(att_layer)
         x = self.transformer.ln_f(x)
@@ -216,7 +210,11 @@ class GPT(nn.Module):
 
         print(f"Loading pre-trained weights for {model_type}")
         # Load the pre-trained GPT-2 from Hugging Face 
-        model = GPT(GPTConfigDefault(binary_classification_head=config.binary_classification_head,dropout=config.dropout,debug=config.debug))
+        model = GPT(GPTConfigDefault(binary_classification_head=config.binary_classification_head,
+                                     dropout=config.dropout,
+                                     debug=config.debug,
+                                     model_type=model_type,
+                                     freeze_layers=config.freeze_layers)) 
         sd = model.state_dict()
         sd_keys = sd.keys()
         sd_keys = [k for k in sd_keys if not k.endswith(".attn.bias")]
@@ -262,8 +260,9 @@ class GPT(nn.Module):
         return model
     
     def setup_lora(self, r:int):
-        for block in self.transformer.h:
-            block.attn.setup_lora(r)
+        for i, block in enumerate(self.transformer.h):
+            if i > self.config.freeze_layers:
+                block.attn.setup_lora(r)
 
     def setup_binary_classification_head(self):
         self.classification_head = nn.Linear(self.config.embedding_size,1)
