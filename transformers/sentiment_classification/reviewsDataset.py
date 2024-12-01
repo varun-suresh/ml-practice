@@ -15,11 +15,11 @@ class reviewsDataset(Dataset):
         self.split = split
         self.cache_dir = cache_dir
         self.enc = tiktoken.get_encoding("gpt2")
-        # prompt_prefix = "Review: The movie was awesome. Sentiment: Positive. Review: The movie was disappointing. Sentiment: Negative. Review:"
+        # prompt_prefix = "Review: The movie was awesome.Sentiment: Positive.Review: The movie was disappointing.Sentiment: Negative. Review: "
         prompt_prefix = "Review: "
         self.prompt_prefix_ids = self.encode(prompt_prefix)
-        prompt_suffix = " Sentiment:"
-        # prompt_suffix = "The sentiment of this review is"
+        prompt_suffix = "Sentiment:"
+        # prompt_suffix = "Is this review positive or negative?"
         self.prompt_suffix_ids = self.encode(prompt_suffix)
         self.max_length = max_length
         self.summary_stats = {}
@@ -69,8 +69,8 @@ class reviewsDataset(Dataset):
         review_ids = []
         orig_review_max_len = self.max_length - len(self.prompt_prefix_ids) - len(self.prompt_suffix_ids)
         review_ids.extend(self.prompt_prefix_ids)
-        review_ids.extend(review_ids_orig[0:orig_review_max_len-1])
-        # review_ids.extend(review_ids_orig[-orig_review_max_len:])
+        # review_ids.extend(review_ids_orig[0:orig_review_max_len-1])
+        review_ids.extend(review_ids_orig[-orig_review_max_len:])
         review_ids.extend(self.prompt_suffix_ids)
         review_ids = torch.tensor(review_ids)
         attention_mask = torch.ones(review_ids.size(),dtype=torch.bool)
