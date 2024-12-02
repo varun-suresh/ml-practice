@@ -4,20 +4,16 @@ Script to finetune GPT-2
 import os
 import math
 from typing import Dict
-import click
 from tqdm import tqdm
 from dataclasses import asdict
-from contextlib import nullcontext
 import torch
 from torch.utils.data.dataloader import DataLoader
-from torch.utils.data import Dataset
-from torch.optim.lr_scheduler import StepLR
 from torch.utils.tensorboard import SummaryWriter
 import loralib as lora
 from sentiment_classification.reviewsDataset import reviewsDataset
 from gpt import GPT
 from gpt_utils import dynamic_padding
-from gpt_config import GPTConfig, GPTConfigDefault
+from gpt_config import GPTConfig 
 from sentiment_classification.train_config import TrainConfig
 
 # torch.manual_seed(1367)
@@ -45,18 +41,15 @@ class Trainer:
         return self.train_config.min_lr + coeff * (self.train_config.learning_rate - self.train_config.min_lr)
 
     def load_model(self):
-
-        self.model = GPT.from_pretrained(config=self.model_config)
         if self.train_config.init_from == "resume":
             ckpt_path = os.path.join(self.train_config.out_dir,self.train_config.checkpoint_name)
             print(f"Resuming training from {ckpt_path}")
             self.ckpt = torch.load(ckpt_path,map_location=self.train_config.device)
-            try:
-                self.model.load_state_dict(self.ckpt["model"])
-            except Exception as e:
-                print(f"Check the model config (using or not using LoRA, block size). The exception was {e}")
-        
-        if self.model_config.freeze_layers > 0:
+            self.model = GPT(GPTConfig(**self.ckpt["model_config"]))
+            self.model.load_state_dict(self.ckpt["model"])
+        else:
+            self.model = GPT.from_pretrained(config=self.model_config) 
+        if self.train_config.freeze_layers > 0:
             self.freeze_layers(self.train_config.freeze_layers)
 
         if self.model_config.use_lora:
@@ -147,6 +140,7 @@ class Trainer:
                     if self.iter_num > 0:
                         ckpt = {"model": self.model.state_dict(),
                                     "train_config": asdict(self.train_config),
+                                    "model_config": asdict(self.model_config),
                                     "optimizer":self.optimizer.state_dict(),
                                     "iter_num": self.iter_num,
                                     "best_val_loss": best_val_loss,

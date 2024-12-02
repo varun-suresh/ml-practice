@@ -3,7 +3,7 @@ from torch import nn
 from torch.nn import functional as F
 import math
 import loralib as lora
-from gpt_config import GPTConfig,GPTConfigDefault 
+from gpt_config import GPTConfig
 
 class MultiHeadedAttention(nn.Module):
     def __init__(self, config):
@@ -74,7 +74,6 @@ class TransformerBlock(nn.Module):
         self.mlp = FeedForward(config)
 
     def forward(self, x):
-    # def forward(self, x):
         if self.config.debug:
             z, att_out = self.attn(self.ln_1(x))
             x = x + z
@@ -89,14 +88,14 @@ class GPT(nn.Module):
     Define the GPT-2 architecture and the ability to load the pretrained model
     """
 
-    def __init__(self, config:GPTConfig = GPTConfigDefault()):
+    def __init__(self, config:GPTConfig):
         super(GPT, self).__init__()
         self.config = config
 
         self.transformer = nn.ModuleDict(
             {
                 "wte": nn.Embedding(self.config.vocab_size, self.config.embedding_size),
-                "wpe": nn.Embedding(self.config.block_size, self.config.embedding_size),
+                "wpe": nn.Embedding(self.config.pretrained_block_size, self.config.embedding_size),
                 "drop": nn.Dropout(self.config.dropout),
                 "h": nn.ModuleList(
                     TransformerBlock(self.config) for _ in range(self.config.n_layers)
@@ -137,9 +136,8 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def crop_block_size(self,block_size):
-        assert block_size < self.config.block_size
-        self.config.block_size = block_size
+    def _crop_block_size(self):
+        block_size = self.config.block_size
         self.transformer.wpe.weight = nn.Parameter(self.transformer.wpe.weight[:block_size])
         for block in self.transformer.h:
             if hasattr(block.attn, "bias"):
@@ -202,25 +200,21 @@ class GPT(nn.Module):
         return optimizer
 
     @classmethod
-    def from_pretrained(cls, model_type:str="gpt2",config:GPTConfig=GPTConfig()):
+    def from_pretrained(cls, config:GPTConfig=GPTConfig()):
         """
         Downloads the Hugging Face model and copies the pre-trained weights on to the model defined here.
         """
         from transformers import GPT2LMHeadModel
 
-        print(f"Loading pre-trained weights for {model_type}")
+        print(f"Loading pre-trained weights for {config.model_type}")
         # Load the pre-trained GPT-2 from Hugging Face 
-        model = GPT(GPTConfigDefault(binary_classification_head=config.binary_classification_head,
-                                     dropout=config.dropout,
-                                     debug=config.debug,
-                                     model_type=model_type,
-                                     freeze_layers=config.freeze_layers)) 
+        model = GPT(config) 
         sd = model.state_dict()
         sd_keys = sd.keys()
         sd_keys = [k for k in sd_keys if not k.endswith(".attn.bias")]
 
         # Init a hugging face transformers model
-        model_hf = GPT2LMHeadModel.from_pretrained(model_type)
+        model_hf = GPT2LMHeadModel.from_pretrained(config.model_type)
         sd_hf = model_hf.state_dict()
 
         # copy while ensuring all of the parameters are aligned and match in names and shapes
@@ -252,17 +246,17 @@ class GPT(nn.Module):
                 assert sd_hf[k].shape == sd[k].shape
                 with torch.no_grad():
                     sd[k].copy_(sd_hf[k])
-        if config.block_size < model.config.block_size:
-            model.crop_block_size(config.block_size)
+        
+        model._crop_block_size()
         if config.use_lora:
-            model.setup_lora(config.r)
+            model.setup_lora()
 
         return model
     
-    def setup_lora(self, r:int):
+    def setup_lora(self):
         for i, block in enumerate(self.transformer.h):
-            if i > self.config.freeze_layers:
-                block.attn.setup_lora(r)
+            if i in self.config.lora_layers:
+                block.attn.setup_lora(self.config.r)
 
     def setup_binary_classification_head(self):
         self.classification_head = nn.Linear(self.config.embedding_size,1)

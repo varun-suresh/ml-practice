@@ -35,3 +35,6 @@ class TrainConfig:
 
     # Gradient Accumulation
     micro_batch_size:int = 2   
+
+    # Freeze layers when fine-tuning
+    freeze_layers:int = 10

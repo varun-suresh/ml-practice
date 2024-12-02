@@ -6,7 +6,6 @@ from tqdm import tqdm
 import torch
 import torch.nn.functional as F
 from torch.utils.data.dataloader import DataLoader
-from contextlib import nullcontext
 from sentiment_classification.reviewsDataset import reviewsDataset
 from gpt_utils import dynamic_padding
 from gpt_config import GPTConfig
@@ -24,10 +23,12 @@ class Eval:
         self.load_model()
         # self.ctx = nullcontext() if eval_config.device == 'cpu' else torch.amp.autocast(device_type=eval_config.device, dtype=ptdtype)
     def load_model(self):
-        self.model = GPT.from_pretrained(config=self.model_config)
         if self.model_config.load_from_checkpoint:
             ckpt = torch.load(self.model_config.checkpoint_path,map_location=self.eval_config.device)
+            self.model = GPT(GPTConfig(**ckpt["model_config"]))
             self.model.load_state_dict(ckpt["model"])
+        else:
+            self.model = GPT.from_pretrained(config=self.model_config)
         self.model.to(self.eval_config.device)
         if self.eval_config.compile:
             self.model = torch.compile(self.model)
