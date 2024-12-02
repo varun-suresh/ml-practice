@@ -25,7 +25,11 @@ class Eval:
     def load_model(self):
         if self.model_config.load_from_checkpoint:
             ckpt = torch.load(self.model_config.checkpoint_path,map_location=self.eval_config.device)
-            self.model = GPT(GPTConfig(**ckpt["model_config"]))
+            model_config = GPTConfig(**ckpt["model_config"])
+            model_config.load_from_checkpoint = self.model_config.load_from_checkpoint
+            model_config.checkpoint_path = self.model_config.checkpoint_path
+            self.model_config = model_config
+            self.model = GPT(self.model_config)
             self.model.load_state_dict(ckpt["model"])
         else:
             self.model = GPT.from_pretrained(config=self.model_config)

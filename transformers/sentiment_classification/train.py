@@ -45,7 +45,11 @@ class Trainer:
             ckpt_path = os.path.join(self.train_config.out_dir,self.train_config.checkpoint_name)
             print(f"Resuming training from {ckpt_path}")
             self.ckpt = torch.load(ckpt_path,map_location=self.train_config.device)
-            self.model = GPT(GPTConfig(**self.ckpt["model_config"]))
+            model_config = GPTConfig(**self.ckpt["model_config"])
+            model_config.load_from_checkpoint = self.model_config.load_from_checkpoint
+            model_config.checkpoint_path = self.model_config.checkpoint_path
+            self.model_config = model_config
+            self.model = GPT(self.model_config)
             self.model.load_state_dict(self.ckpt["model"])
         else:
             self.model = GPT.from_pretrained(config=self.model_config) 

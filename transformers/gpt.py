@@ -119,6 +119,11 @@ class GPT(nn.Module):
                     p, mean=0.0, std=0.02 / math.sqrt(2 * config.n_layers)
                 )
 
+        if self.config.load_from_checkpoint:
+            self._crop_block_size()
+            if self.config.use_lora:
+                self.setup_lora()
+
 
         print(f"Number of parameters: {self.get_num_params()/1e6:.2f}M")
 
