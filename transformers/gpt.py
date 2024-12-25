@@ -36,15 +36,15 @@ class MultiHeadedAttention(nn.Module):
         ).transpose(1, 2)
         if self.config.debug:
             att = (q @ k.transpose(-2,-1)) * (1.0 * math.sqrt(k.size(-1)))
-            # bias = torch.tril(torch.ones(self.config.block_size,self.config.block_size)).view(1,1,self.config.block_size,self.config.block_size)
-            # att = att.masked_fill(bias[:,:,:T,:T] == 0, float('-inf'))
+            bias = torch.tril(torch.ones(self.config.block_size,self.config.block_size)).view(1,1,self.config.block_size,self.config.block_size)
+            att = att.masked_fill(bias[:,:,:T,:T] == 0, float('-inf'))
             att = F.softmax(att,dim=-1)
             
             
-        y = torch.nn.functional.scaled_dot_product_attention(
-            q, k, v, attn_mask=attention_mask.view(B,1,1,-1),dropout_p=self.config.dropout if self.training else 0.0,
-        )
-        # y = torch.nn.functional.scaled_dot_product_attention(q,k,v,is_causal=True)
+        # y = torch.nn.functional.scaled_dot_product_attention(
+            # q, k, v, attn_mask=attention_mask.view(B,1,1,-1),dropout_p=self.config.dropout if self.training else 0.0,
+        # )
+        y = torch.nn.functional.scaled_dot_product_attention(q,k,v,is_causal=True)
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         y = self.resid_dropout(self.c_proj(y))
 

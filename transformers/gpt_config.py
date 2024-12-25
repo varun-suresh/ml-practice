@@ -26,7 +26,7 @@ class GPTConfig(GPTConfigDefault):
     binary_classification_head:bool = True
 
     # Regularizaztion
-    dropout: float = 0.1
+    dropout: float = 0.2
 
     # For debugging
     debug:bool = False

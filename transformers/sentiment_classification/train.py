@@ -55,7 +55,7 @@ class Trainer:
             except Exception as e:
                 print(f"Check the model config (using or not using LoRA, block size). The exception was {e}")
         if self.model_config.use_lora:
-            lora.mark_only_lora_as_trainable(self.model)
+            lora.mark_only_lora_as_trainable(self.model,bias='all')
         # Need to learn the classification layer. Explicitly set the gradient to True
         if self.model_config.binary_classification_head:
             self.model.classification_head.weight.requires_grad = True
@@ -100,7 +100,7 @@ class Trainer:
                 target = batch["labels"]
             else:
                 target = batch["label_idxs"]
-            logits, loss = self.model(batch["input_ids"].to(self.train_config.device),
+            logits, loss, _ = self.model(batch["input_ids"].to(self.train_config.device),
                                     batch["attention_masks"].to(self.train_config.device),
                                     target=target.to(self.train_config.device))
      
@@ -169,10 +169,10 @@ class Trainer:
                 target_train = train_batch['label_idxs']
                 target_val = val_batch['label_idxs']
 
-            _, train_loss[i] = self.model(train_batch['input_ids'].to(self.train_config.device), 
+            _, train_loss[i],_ = self.model(train_batch['input_ids'].to(self.train_config.device), 
                                     train_batch['attention_masks'].to(self.train_config.device),
                                     target=target_train.to(self.train_config.device))
-            _, val_loss[i] = self.model(val_batch['input_ids'].to(self.train_config.device),
+            _, val_loss[i], _ = self.model(val_batch['input_ids'].to(self.train_config.device),
                             val_batch['attention_masks'].to(self.train_config.device),
                             target=target_val.to(self.train_config.device))
     
